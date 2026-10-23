@@ -1,0 +1,81 @@
+{
+  "upstream": "https://github.com/isod89/sloop-fm1.git",
+  "upstream_commit": "4ec1ac829fd2bdf2c571ea215fb3d62477d01220",
+  "upstream_version": "Sloop 2.7.1",
+  "upstream_tree": "41d60dc4d29e4d27a7eaa146fc3fca0b0707f8df",
+  "patch": "sloop-fm1-cartridge.patch",
+  "patch_format": "git diff --binary (apply with git apply on a checkout of upstream_commit)",
+  "patch_sha256": "ad9dbb82e4ca0483d64de3f1b71b3ef814b932c52a2191c23ea0e2feddba754e",
+  "result_tree": "23123cb9e5ab1d125f5690c012e19ebb567ee524",
+  "result_tree_note": "git tree id of sloop-fm1/ after applying the patch; equals the sloop-fm1/ directory of this repository",
+  "files_added": [
+    "build-cartridge.sh",
+    "docs/CARTRIDGE_BUILD.md",
+    "docs/CARTRIDGE_CONTROL.md",
+    "docs/CARTRIDGE_USB_RETURN.md",
+    "firmware/src/cartridge.c",
+    "firmware/src/cartridge_wire.h",
+    "firmware/src/uac_rx.c",
+    "firmware/src/ui_cartridge.c",
+    "tests/cartridge_diag_test.c",
+    "tests/cartridge_ui_test.c",
+    "tests/run_cartridge_tests.sh",
+    "tests/uac_rx_mix_test.c",
+    "tests/uac_rx_test.c",
+    "tests/uac_rx_ui_test.c",
+    "tests/uac_rx_usb_test.c"
+  ],
+  "files_modified": [
+    "README.md",
+    "firmware/hal/fm1_sys.h",
+    "firmware/hal/fm1_usb.h",
+    "firmware/src/core.h",
+    "firmware/src/felucca.c",
+    "firmware/src/fx.c",
+    "firmware/src/main.c",
+    "firmware/src/params.c",
+    "firmware/src/seq.c",
+    "firmware/src/ui_draw.c",
+    "firmware/src/ui_input.c",
+    "firmware/src/ui_menu.c",
+    "firmware/src/ui_studio.c",
+    "firmware/src/usb.c",
+    "firmware/src/voice.c",
+    "tests/hostsim.c",
+    "tests/ui_pages_test.c",
+    "tools/build.py"
+  ],
+  "features": [
+    "USB audio playback (UAC1, EP 0x04 OUT, PCM16 stereo 44.1 kHz) into the mixer, ring buffer with Hermite ASRC",
+    "HOME > USB: USB RETURN gain and CHARGE (charger control while the cartridge is the host)",
+    "GLO > CARTRIDGE page: engine/preset/parameter/value on the four knobs, firmware name, FIRMWARE slot selection; cartridge protocol version 3 (firmware/src/cartridge_wire.h)",
+    "Cartridge track: the track on the cartridge's MIDI channel sends its notes (keys, chords, arpeggiator, steps, rolls, takes) over MIDI with its engine silent, shows the cartridge's engine and preset, and PRESETS browses the cartridge's presets",
+    "build-cartridge.sh profile and native tests"
+  ],
+  "build_flags": {
+    "FELUCCA_CARTRIDGE": 1,
+    "FELUCCA_UAC_RX": 1,
+    "FELUCCA_UAC": 0,
+    "FELUCCA_CDC": 0
+  },
+  "package": {
+    "command": "sh build-cartridge.sh",
+    "app_bytes": 579952,
+    "app_limit_bytes": 581564,
+    "app_free_bytes": 1612,
+    "main_data_bss_bytes": 60844,
+    "low_ram_bytes": 22772,
+    "pool_bytes": 333900,
+    "pool_free_bytes": 10164,
+    "fwsc_bytes": 610163,
+    "felucca_bin_sha256": "51b801abdff65a06b646db0974b1377669ba7dd26a30af27817bc435d6d6b441",
+    "felucca_fwsc_sha256": "012ee2b60c941650aeca2eb9064bbcbd1b6fba5c64f2594bca3df8729269d3d2",
+    "note": "sources that use __DATE__/__TIME__ change the hashes of a rebuild"
+  },
+  "diagnostic_package": {
+    "command": "FELUCCA_CARTRIDGE_DIAG=1 sh build-cartridge.sh",
+    "app_bytes": 580064,
+    "app_free_bytes": 1500
+  },
+  "shared_with_cartridge": "firmware/src/cartridge_wire.h is byte-identical to core/include/fm1/cartridge_wire.h"
+}

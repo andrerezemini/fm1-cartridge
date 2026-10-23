@@ -1,0 +1,28 @@
+# Melodee DSP memory placement, as clipper.lf: the sequencer's pattern pool and the recording
+# lists (never touched per sample) live in external PSRAM. The audio arena (resources.c, the
+# engines' voice state and the FX slots), the tracks and the mixer stay in internal RAM: per-sample
+# random access through the data cache to 40 MHz quad PSRAM is far too slow for the render budget.
+[scheme:melodee_psram]
+entries:
+    bss -> extern_ram
+    common -> extern_ram
+
+[mapping:melodee_psram]
+archive: libmain.a
+entries:
+    if FM1_AUDIO_MELODEE = y:
+        melodee_synth:pattern_chunks_ram (melodee_psram)
+        melodee_synth:pattern_chunks_retained (melodee_psram)
+        melodee_synth:pattern_link (melodee_psram)
+        melodee_synth:recording (melodee_psram)
+        melodee_synth:recording_flags (melodee_psram)
+        melodee_synth:recording_next (melodee_psram)
+        melodee_synth:recording_due (melodee_psram)
+        melodee_synth:recording_refs (melodee_psram)
+        melodee_synth:recording_live_next (melodee_psram)
+        melodee_synth:recording_heap_free (melodee_psram)
+        melodee_synth:recording_heap_pos (melodee_psram)
+        melodee_synth:recording_message (melodee_psram)
+        melodee_synth:recording_watch (melodee_psram)
+        melodee_synth:fm6_rx (melodee_psram)
+        melodee_synth:live_velocity (melodee_psram)

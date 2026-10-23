@@ -1,0 +1,7 @@
+item,quantity,role,specification,purpose,check_before_assembly
+ESP32-S3 Super Mini,1,part,"ESP32-S3 QFN56 with 4 MB flash and 2 MB PSRAM in the package; USB-C; BAT pad","USB host and synthesis; runs the -4m2m firmware profiles","Circuit revision unconfirmed: check the BAT path and the charge current on the board itself"
+Protected 1S LiPo,1,part,"3.7 V nominal pouch cell with a protection circuit; sized to sit under the board","The cartridge's own power","Polarity; protection; maximum charge and discharge current from its datasheet"
+SPDT slide switch,1,part,"Small; current rating above the measured peaks","Breaks BAT+","One outer terminal stays isolated; confirm the positions with a multimeter"
+USB-C male-to-male adapter,1,part,"USB 2.0 data lines; both ends male","Plugs the board's USB-C port into the FM-1's","Data continuity and both orientations; the weight must not lever on the FM-1's port"
+Case and insulation,1,part,"Insulating tape and glue between the board and the cell; a small case","Mechanical assembly","Do not compress or puncture the cell; keep access to the switch and the USB-C port"
+Multimeter,1,tool,"Voltage, continuity and current ranges","Polarity, rail and continuity checks","Correct ammeter connection; disconnect power before changing the wiring"

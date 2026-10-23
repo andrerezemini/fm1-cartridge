@@ -1,0 +1,18 @@
+# Felucca DSP memory placement, as clipper.lf: only the large, sequentially accessed delay and
+# loop buffers (upstream ".pool" objects) live in external PSRAM. Voice, engine (eng_mem), track
+# and effect state stays in internal RAM: per-sample random access through the data cache to
+# 40 MHz quad PSRAM is far too slow for the 44.1 kHz render budget.
+[scheme:felucca_psram]
+entries:
+    bss -> extern_ram
+    common -> extern_ram
+
+[mapping:felucca_psram]
+archive: libmain.a
+entries:
+    if FM1_AUDIO_FELUCCA = y:
+        felucca_synth:dly_buf (felucca_psram)
+        felucca_synth:cho_buf (felucca_psram)
+        felucca_synth:rev_comb (felucca_psram)
+        felucca_synth:sl_buf (felucca_psram)
+        felucca_synth:fl_buf (felucca_psram)

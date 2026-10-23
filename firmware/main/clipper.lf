@@ -1,0 +1,23 @@
+# Clipper DSP memory placement. Only the large, mostly sequential delay and
+# wavetable buffers (upstream ".pool" objects) live in external PSRAM. Voice,
+# engine, track and effect state stays in internal RAM: random per-sample
+# access through the data cache to 40 MHz quad PSRAM is far too slow for the
+# 44.1 kHz render budget. eng_arena is deliberately kept internal.
+[scheme:clipper_psram]
+entries:
+    bss -> extern_ram
+    common -> extern_ram
+
+[mapping:clipper_psram]
+archive: libmain.a
+entries:
+    if FM1_AUDIO_CLIPPER = y:
+        clipper_synth:dly_buf (clipper_psram)
+        clipper_synth:cho_buf (clipper_psram)
+        clipper_synth:rev_line (clipper_psram)
+        clipper_synth:rev_ap (clipper_psram)
+        clipper_synth:pl_buf (clipper_psram)
+        clipper_synth:ps_buf (clipper_psram)
+        clipper_synth:wt_mip (clipper_psram)
+        clipper_synth:wt_fr (clipper_psram)
+        clipper_synth:wt_fi (clipper_psram)

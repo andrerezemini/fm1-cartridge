@@ -1,0 +1,34 @@
+[
+ {
+  "name": "VOX",
+  "file": "vox.wav",
+  "rate": 16000,
+  "root": 57,
+  "ls": 7360,
+  "le": 14719
+ },
+ {
+  "name": "GLASS",
+  "file": "glass.wav",
+  "rate": 16000,
+  "root": 72,
+  "ls": 5767,
+  "le": 12799
+ },
+ {
+  "name": "PAD",
+  "file": "pad.wav",
+  "rate": 16000,
+  "root": 60,
+  "ls": 7216,
+  "le": 13119
+ },
+ {
+  "name": "AIR",
+  "file": "air.wav",
+  "rate": 16000,
+  "root": 72,
+  "ls": 2976,
+  "le": 9919
+ }
+]

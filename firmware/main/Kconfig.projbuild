@@ -1,0 +1,68 @@
+menu "FM1 Cartridge"
+    config FM1_ENABLE_UAC_TX
+        bool "Enable experimental UAC1 audio TX"
+        default n
+        help
+            Requires a device with a working PCM16 stereo 44.1 kHz ISO OUT.
+            Current upstream SLOOP does not provide this input. Validate its
+            new USB audio input with a computer before enabling this option.
+
+    choice FM1_AUDIO_SOURCE
+        prompt "Audio source"
+        depends on FM1_ENABLE_UAC_TX
+        default FM1_AUDIO_TONE
+        config FM1_AUDIO_TONE
+            bool "440 Hz bench tone (-20 dBFS)"
+        config FM1_AUDIO_CLIPPER
+            bool "Clipper synthesizer (USB-MIDI, experimental)"
+            depends on SPIRAM
+            select SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY
+        config FM1_AUDIO_FELUCCA
+            bool "Felucca 1.6.1 synthesizer (USB-MIDI, experimental)"
+            depends on SPIRAM
+            select SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY
+        config FM1_AUDIO_MELODEE
+            bool "Melodee 1.4.5 synthesizer (USB-MIDI, experimental)"
+            depends on SPIRAM
+            select SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY
+    endchoice
+
+    config FM1_AUDIO_SYNTH
+        bool
+        default y if FM1_AUDIO_CLIPPER || FM1_AUDIO_FELUCCA || FM1_AUDIO_MELODEE
+        default n
+
+    config FM1_SYNTH_ENGINE
+        int "Engine index at boot"
+        depends on FM1_AUDIO_SYNTH
+        range 0 31
+        default 0
+        help
+            Validated at boot against the linked synthesizer's catalogue; an
+            invalid index aborts with an explicit error.
+
+    config FM1_SYNTH_PRESET
+        int "Preset index at boot (validated at boot)"
+        depends on FM1_AUDIO_SYNTH
+        range 0 255
+        default 0
+
+    config FM1_MIDI_CHANNEL
+        int "MIDI channel the synthesizer answers at boot (0 = omni)"
+        depends on FM1_AUDIO_SYNTH
+        range 0 16
+        default 1
+        help
+            The FM-1 sends each track on its own channel (GLO > MIDI: CH1..CH3,
+            DR CH). 1 plays the cartridge from track 1 only; 0 answers every
+            channel. Changeable live as the first CARTRIDGE page parameter, MIDI CH.
+
+    config FM1_SLOT_SWITCH_MS
+        int "FIRMWARE: ms the knob rests on another slot before rebooting into it"
+        range 500 10000
+        default 2000
+        help
+            GLO > CARTRIDGE > parameter FIRMWARE (knob 3), value (knob 4): the
+            slot the value rests on for this long is set as the boot partition
+            and the cartridge restarts. Turning back to the running slot cancels.
+endmenu

@@ -1,0 +1,11 @@
+/build*/
+/out/
+/firmware/build*/
+/firmware/sdkconfig
+/firmware/sdkconfig.old
+/firmware/managed_components/
+__pycache__/
+.DS_Store
+*.pyc
+/.venv/
+/third_party/*/build/

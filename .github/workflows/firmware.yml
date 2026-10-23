@@ -1,0 +1,16 @@
+name: esp32s3
+on: [push, pull_request]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: espressif/idf:v5.3.6
+    strategy:
+      matrix:
+        profile: [midi, tone, clipper]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile firmware (no flash)
+        shell: bash
+        run: |
+          . /opt/esp/idf/export.sh
+          ./firmware/build.sh "${{ matrix.profile }}"

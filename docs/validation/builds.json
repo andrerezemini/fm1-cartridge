@@ -1,0 +1,86 @@
+{
+  "esp_idf": "5.3.6",
+  "target": "esp32s3",
+  "usb_host_uac": "1.5.0",
+  "partition_table": "firmware/partitions.csv (ota_0..ota_2, 0x140000 bytes each, bootloader rollback)",
+  "usb_host_fifo_words": {
+    "rx": 104,
+    "non_periodic_tx": 48,
+    "periodic_tx": 48
+  },
+  "note": "Binaries built from the sources of this revision with firmware/build.sh. hardware_tested refers to the binary itself; observations on hardware are summarised in docs/ROADMAP.md.",
+  "profiles": [
+    {
+      "profile": "midi",
+      "binary": "firmware/build-midi/fm1_cartridge.bin",
+      "bytes": 276624,
+      "sha256": "f761f076579730d35cd46828a766168b1f1bbc0b02453266675b9b9a43339bb5",
+      "app_slot_bytes": 1310720,
+      "build_result": "passed",
+      "hardware_tested": false
+    },
+    {
+      "profile": "tone-4m2m",
+      "binary": "firmware/build-tone-4m2m/fm1_cartridge.bin",
+      "bytes": 305344,
+      "sha256": "6c8e8d371871741919b59befa77fcd79b56c04cbe6a0aa0805031afdddcd5bdc",
+      "app_slot_bytes": 1310720,
+      "build_result": "passed",
+      "hardware_tested": false
+    },
+    {
+      "profile": "clipper-4m2m",
+      "binary": "firmware/build-clipper-4m2m/fm1_cartridge.bin",
+      "bytes": 727712,
+      "sha256": "6e5bdd6f58cf193b1652408fe8d22cbb0b35f5705515fe89a3549d57a3991dda",
+      "app_slot_bytes": 1310720,
+      "build_result": "passed",
+      "hardware_tested": false
+    },
+    {
+      "profile": "felucca-4m2m",
+      "binary": "firmware/build-felucca-4m2m/fm1_cartridge.bin",
+      "bytes": 558976,
+      "sha256": "008c62817f9c7dfbad6fc43e2290454f6c27acf2057fb683b5fc1683d71efdc0",
+      "app_slot_bytes": 1310720,
+      "build_result": "passed",
+      "hardware_tested": false
+    },
+    {
+      "profile": "melodee-4m2m",
+      "binary": "firmware/build-melodee-4m2m/fm1_cartridge.bin",
+      "bytes": 526768,
+      "sha256": "df4829fdf67b3d3e89315504f8d704942eb78b2039f2654f54b09f991196ba91",
+      "app_slot_bytes": 1310720,
+      "build_result": "passed",
+      "hardware_tested": false
+    },
+    {
+      "profile": "clipper",
+      "binary": "firmware/build-clipper/fm1_cartridge.bin",
+      "bytes": 731632,
+      "sha256": "dd5f933ba52927ee411827dc772a90a39922a963458aef02b982d834f37512df",
+      "app_slot_bytes": 1310720,
+      "build_result": "passed",
+      "hardware_tested": false
+    },
+    {
+      "profile": "felucca",
+      "binary": "firmware/build-felucca/fm1_cartridge.bin",
+      "bytes": 562896,
+      "sha256": "11c229e1cf67098f8f5b96e5314df389ee561ceea7621d26f3db88388e40b7ac",
+      "app_slot_bytes": 1310720,
+      "build_result": "passed",
+      "hardware_tested": false
+    },
+    {
+      "profile": "melodee",
+      "binary": "firmware/build-melodee/fm1_cartridge.bin",
+      "bytes": 530688,
+      "sha256": "b39017e2d85912b2338590d1c4231cf452dcfb68fb9ef1493bde4bf54ab14d47",
+      "app_slot_bytes": 1310720,
+      "build_result": "passed",
+      "hardware_tested": false
+    }
+  ]
+}
