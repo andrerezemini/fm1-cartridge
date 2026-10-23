@@ -104,6 +104,9 @@ and 4 its value. The header shows the running firmware (**CLIPPER OK**, **MELODE
 **FELUCCA OK**) or NO LINK. To switch synthesizer, turn knob 3 to **FIRMWARE** and
 knob 4 to a slot: the cartridge reboots into it 2 s later. Edits live in RAM.
 
+The [user guide](docs/USER_GUIDE.md) walks through every step, from connecting the cartridge to
+switching firmware, with a troubleshooting table.
+
 ## Build and test on a Mac or Linux
 
 Requirements: a C11 compiler, CMake 3.20 or newer and Python 3. The native build downloads
@@ -203,7 +206,7 @@ Parts of the electrical design are still open, so no circuit here is a proven de
 | `core/` | USB-MIDI parser, endpoint discovery, the cartridge wire format and a reference audio receiver |
 | `sim/`, `tests/` | Offline simulation and tests |
 | `hardware/` | BOM, photos of the prototype, and electrical and mechanical notes |
-| `docs/` | Architecture, protocols, ports, slots, flashing, bench tests, gates and validation |
+| `docs/` | User guide, architecture, protocols, ports, slots, flashing, bench tests, gates and validation |
 
 Code under [GPL-3.0-only](LICENSE), preserving the notices and compatible licences of the upstream
 components (see each `third_party/*/README.md`). An independent project, not affiliated with

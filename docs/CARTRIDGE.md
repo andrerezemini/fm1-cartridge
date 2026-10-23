@@ -3,7 +3,8 @@
 The CARTRIDGE page of the modified Sloop edits the synthesizer running on the ESP32
 and chooses which firmware slot the ESP32 boots. The FM-1 and the ESP32 must run the same protocol
 version; once both are installed, choosing sounds, editing parameters and switching synthesizer
-need neither recompiling nor flashing.
+need neither recompiling nor flashing. For a step-by-step walkthrough, see the
+[user guide](USER_GUIDE.md).
 
 ## Operation
 
