@@ -336,8 +336,10 @@ UI_SMALL static void mi_set(uint32_t i, int32_t s)
 #endif
 #if FELUCCA_UAC_RX
     case MI_RETURN: {
+        static uint8_t before = 128;                    /* OCT+ unmutes to the level it muted */
         int32_t percent = (int32_t)(uac_rx_gain * 100u + 64u) / 128;
-        if (!s) uac_rx_gain = uac_rx_gain ? 0 : 128;
+        if (!s && uac_rx_gain) before = uac_rx_gain, uac_rx_gain = 0;
+        else if (!s) uac_rx_gain = before;
         else {
             percent = clamp(percent + (s > 0 ? 1 : -1), 0, 100);
             uac_rx_gain = (uint8_t)((percent * 128 + 50) / 100);

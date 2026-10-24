@@ -58,6 +58,7 @@ Reading:
 - [ ] Keyboard: every note ends; velocity zero is Note Off.
 - [ ] Sequencer, arpeggiator and rolls in the corresponding OUT configuration; start/stop/clock as the firmware handles them.
 - [ ] Disconnect with notes held; reconnect ten times; no old voice or transfer survives.
+- [ ] A transfer error on a device that stays attached (for example a cable touched during notes): the log shows the interface opened again and the CLEAR_FEATURE, and MIDI resumes without a replug; record how often it happens.
 - [ ] With upstream Sloop, which has no USB playback, record separately that there is no audio return; this is expected.
 
 ## G2: playback on Sloop using the Mac
@@ -80,10 +81,22 @@ Run with the modified Sloop ([SLOOP_INTEGRATION.md](SLOOP_INTEGRATION.md)) and t
 - [ ] MIDI and audio simultaneously, sequencer active, Sloop UI and effects under load.
 - [ ] Thirty continuous minutes per scenario; error logs, ring fill and core load.
 - [ ] Restart each side, suspend and reconnect, pull the cable during a note; no stuck note.
+- [ ] `render_max_us`, `pass_max_us` and `underruns` on the UART (every 5 s) and AUDIO RENDER MAX / AUDIO UNDERRUNS on the CARTRIDGE page, per engine, with the 2,048 B ring and 64-frame renders; a WAVE table change in Clipper and fast PRESETS browsing during a sequence. If underruns appear, record them before changing `CONFIG_FM1_UAC_BUFFER_BYTES`.
+- [ ] MIDI CH changed while a note, a KBD HOLD chord and an arpeggio sound; the link coming up while keys are held; a preset change under a held pad in each synthesizer, PROPHET, FM6 and CZ-1 included (a fade, no click, tails ringing); Melodee DRUM 808 KIT → 909 KIT while a pattern plays (the hits cut, no reset); a Clipper WAVE table changed under a held note (silence, then a fade-in).
+- [ ] The cartridge unplugged and plugged back while a song plays: START reaches it on the next bar line, and a synced arpeggio or delay on the cartridge stays on Sloop's beat.
+- [ ] The return's start and re-prime (a replug, a slot switch): no click; USB RETURN, the cartridge track's LEVEL and MUTE: no zipper; the track's meter follows the return.
+- [ ] The cartridge's sound after a restart and after a slot switch back: engine, preset, MIDI CH and edits as left; an NVS write during silence leaves no audible gap.
 - [ ] Cartridge track with OUT at KEYS: the keys, steps, arpeggiator and a recorded take of track 1 play the cartridge while its internal engine stays silent; the footer and TRACKS show the cartridge's preset; PRESETS steps the cartridge's presets across engines; MUTE, STOP and MIDI CH = OMNI leave no stuck note.
 - [ ] One reference engine and preset per synthesizer before increasing voices; note program, parameters and seed when there is randomness.
 - [ ] Compare the reference WAV and the physical capture with the same notes and level; clock or alignment differences are not automatically a DSP regression.
-- [ ] Latency measured with event and capture on a common time base; record median, minimum/maximum, number of repetitions and method. Do not add up nominal times and call them a measurement.
+- [ ] Latency measured with event and capture on a common time base; record median, minimum/maximum, number of repetitions and method. Do not add up nominal times and call them a measurement. `tests/test_pipeline.c` models about 25 ms from render to mixer; the measurement decides.
+
+## G5: firmware slots
+
+- [ ] Each slot chosen from FIRMWARE boots, enumerates, answers ("<NAME> OK") and stays the default after a power cycle.
+- [ ] A turn back to the running slot, knob 3 moved off FIRMWARE and the page left within 2 s each cancel; with notes held or the transport running, FIRMWARE reads PLAYING and does not move.
+- [ ] A slot that never answers (the TONE profile in a slot, or the FM-1 unplugged during the boot): the next reset returns to the previous slot, which then lists it as "<NAME> FAIL".
+- [ ] A power cycle on a pending slot; a full flash, then `ota_0` boots without a pending state.
 
 ## G6: power and enclosure
 

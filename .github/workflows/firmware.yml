@@ -6,10 +6,10 @@ jobs:
     container: espressif/idf:v5.3.6
     strategy:
       matrix:
-        profile: [midi, tone, clipper]
+        profile: [midi, midi-4m2m, tone, tone-4m2m, clipper, clipper-4m2m, felucca, felucca-4m2m, melodee, melodee-4m2m]
     steps:
       - uses: actions/checkout@v4
-      - name: Compile firmware (no flash)
+      - name: Compile firmware (no flash); ESP-IDF refuses an image larger than its 1.25 MB slot
         shell: bash
         run: |
           . /opt/esp/idf/export.sh

@@ -24,7 +24,11 @@ typedef struct {
     int (*midi)(uint8_t status, uint8_t data1, uint8_t data2);   /* 0 queued, -1 unsupported, -2 overflow (panics) */
     void (*render)(int16_t *stereo, size_t frames);               /* interleaved PCM16, any frame count */
     void (*panic)(void);                                          /* all voices and tails off; sound kept */
-    int (*set_preset)(uint32_t engine, uint32_t preset);          /* -1 if invalid; panics first */
+    void (*release)(void);                                        /* every sounding note let go (its release
+                                                                   * runs out), the note-ons still queued
+                                                                   * dropped; tails and sound kept */
+    int (*set_preset)(uint32_t engine, uint32_t preset);          /* -1 if invalid; what sounds fades out in a
+                                                                   * few ms, the effect tails ring on */
     uint32_t (*engine_count)(void);
     uint32_t (*preset_count)(uint32_t engine);
     const char *(*engine_name)(uint32_t engine);                  /* NULL if invalid */

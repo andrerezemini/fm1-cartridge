@@ -398,6 +398,12 @@ UI_SMALL void fm1_cstart(void)
     if ((p3 & 1u) && !(p3 & (4u | 0x40u)))
         bootguard_clear(&bootguard);           /* a power-on (not a watchdog or soft reset): no failed boot to count */
     boot_mode = bootguard_begin(&bootguard);
+#if FELUCCA_CARTRIDGE
+    if (cart_keep.magic == CART_KEEP_MAGIC && cart_keep.off) {
+        fm1_charge_set(1);                      /* before the rescue, the updater or SLOOP: the charger as before the */
+        cart_keep.off = 0;                      /* cartridge held it off (cartridge.c), not off until a P33 reset */
+    }
+#endif
     if (boot_mode == BOOT_ROM) {
         fm1_enter_uboot();
     }

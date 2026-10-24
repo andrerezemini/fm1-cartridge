@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #include "fm1/usb_midi.h"
 #include "fm1/usb_descriptors.h"
+#include "fm1/cartridge_wire.h"
 #include "sloop_descriptor.h"
 #include "sloop_cartridge_descriptor.h"
 #include "../firmware/main/usb_host_fifo.h"
@@ -100,4 +101,21 @@ static void cartridge_descriptors(void)
     }
 }
 
-int main(void) { midi(); descriptors(); paired_midi(); cartridge_descriptors(); puts("protocol: ok"); return 0; }
+/* A newer peer's request (a later version byte, fields appended) reads as this version's; an older
+ * version, a reply, or a broken frame does not. */
+static void cartridge_versions(void)
+{
+    uint8_t q[CART_REQUEST_SIZE], out[CART_REQUEST_SIZE], longer[CART_REQUEST_SIZE + 3];
+    cart_header(q, 77, CART_VALUE, 5); cart_put14(q + CART_ARG, 8192 + 2); q[CART_REQUEST_SIZE - 1] = 0xf7;
+    assert(cart_request_of(q, sizeof q, out) && !memcmp(out, q, sizeof q));
+    memcpy(longer, q, CART_REQUEST_SIZE - 1); longer[4] = CART_VERSION + 1;
+    longer[CART_REQUEST_SIZE - 1] = 0x11; longer[CART_REQUEST_SIZE] = 0x22; longer[CART_REQUEST_SIZE + 1] = 0x33;
+    longer[CART_REQUEST_SIZE + 2] = 0xf7;
+    assert(cart_request_of(longer, sizeof longer, out) && out[4] == CART_VERSION + 1 &&
+           !memcmp(out + 5, q + 5, CART_REQUEST_SIZE - 6) && out[CART_REQUEST_SIZE - 1] == 0xf7);
+    longer[4] = CART_VERSION - 1; assert(!cart_request_of(longer, sizeof longer, out));
+    longer[4] = CART_VERSION + 1; longer[CART_REQUEST_SIZE] = 0x80; assert(!cart_request_of(longer, sizeof longer, out));
+    q[CART_OP] = CART_REPLY; assert(!cart_request_of(q, sizeof q, out));
+    assert(!cart_request_of(q, sizeof q - 1, out));
+}
+int main(void) { midi(); descriptors(); paired_midi(); cartridge_descriptors(); cartridge_versions(); puts("protocol: ok"); return 0; }

@@ -93,7 +93,7 @@ static void cart_draw(void)
         if (cart.online) {                                  /* "<firmware> OK": what the cartridge runs */
             str_cpy(b, (const char *)cart.view + CART_FW_NAME, 12);
             if (!b[0]) str_cpy(b, "LINK", sizeof b);
-            str_cpy(b + str_len(b), " OK", 4);
+            str_cpy(b + str_len(b), uar.active ? " OK" : " NO AUDIO", 10);   /* (the stream stopped: replug) */
         } else str_cpy(b, "NO LINK", sizeof b);
         cv_text(234 - text_w(&FONT_S, b), 3, &FONT_S, b, cart.online ? C_WHITE : C_DIM);
         cv_blit(0, 0);

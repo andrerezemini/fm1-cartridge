@@ -686,6 +686,13 @@ UI_SMALL static int audio_quiet(void)
     for (i = 0; i < NDRUM; i++)
         if (drums.v[i].active)
             return 0;
+#if FELUCCA_CARTRIDGE
+    if (!cart_quiet())                              /* the cartridge sounds (seq.c) */
+        return 0;
+#elif FELUCCA_UAC_RX
+    if (fm1_ms - uar_loud_ms < 1000u)               /* the USB return: a computer playing */
+        return 0;
+#endif
     return 1;
 }
 

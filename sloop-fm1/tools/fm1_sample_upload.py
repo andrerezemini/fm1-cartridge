@@ -22,7 +22,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import sampleio as sio  # noqa: E402
 
 HDR = [0x7D, 0x46, 0x4C]
-RC = {1: "size", 2: "header", 3: "data CRC", 4: "flash", 5: "zones"}
+RC = {1: "size", 2: "header", 3: "data CRC", 4: "flash", 5: "zones", 6: "no SMP_BEGIN", 7: "the song plays"}
+PLAYS = "the song plays: stop the FM-1 (PLAY) first"   # SMP_BEGIN / SMP_ERASE rc 3, SMP_WRITE rc 5, SMP_END rc 7
 
 
 def pack7(b):
@@ -118,17 +119,19 @@ def main():
             i = j + 2
         return
     if cmd == "erase":
-        print("erase:", "ok" if link.req(14, [slot], 10)[1] == 0 else "FAILED")
+        rc = link.req(14, [slot], 10)[1]
+        print("erase:", "ok" if rc == 0 else PLAYS if rc == 3 else f"FAILED ({rc})")
         return
     print(f"USR{slot + 1} {sys.argv[3]}: {len(data)} B ADPCM, {hdr[6]} zones")
-    if link.req(11, [slot])[1]:
-        sys.exit("begin failed")
+    rc = link.req(11, [slot])[1]
+    if rc:
+        sys.exit(f"begin: {PLAYS}" if rc == 3 else f"begin failed ({rc})")
     t0 = time.time()
     for off in range(0, len(data), 256):
         a = sio.SLOT_DATA_OFF + off
         r = link.req(12, [slot, a & 0x7F, (a >> 7) & 0x7F, (a >> 14) & 0x7F] + pack7(data[off:off + 256]))
         if r[4]:
-            sys.exit(f"write at {a:#x} failed ({r[4]})")
+            sys.exit(f"\nwrite at {a:#x}: {PLAYS}" if r[4] == 5 else f"\nwrite at {a:#x} failed ({r[4]})")
         print(f"\r  {min(off + 256, len(data))} / {len(data)}", end="", flush=True)
     r = link.req(13, [slot] + pack7(hdr), 5)
     print(f"\n  {time.time() - t0:.1f} s, end:", "ok" if r[1] == 0 else f"FAILED ({r[1]}, {RC.get(r[1], '?')})")

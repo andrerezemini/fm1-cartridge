@@ -146,15 +146,48 @@ static void melodee_panic(void)
     clear_effects();
 }
 
+/* The patch hooks of a preset (ui.c engine_load_of): PROPHET's, CZ-1's and FM6's patch memory. While
+ * the old sound of the same engine fades out they would rewrite the patch under it (a click), so
+ * they wait for the end of the fade (melodee_render), before the notes held for it start. */
+static uint8_t hooks_pending;
+/* Upstream's fade renders the old sound with the old engine values (pe_old) and the new common ones;
+ * here the common ones of the fading sound too (its envelope, filter, effects), as Clipper's
+ * sound_fade_begin does: kept from the fade's start and put back for each of its blocks (melodee_render) */
+static int16_t fade_p[P_E0];
+static void load_hooks(track_t *t)
+{
+    hooks_pending = 0;
+    if (t->eng_req == ENGI_PROPHET) { p5_ready[0] = 1; p5_preset_loaded(t, t->preset); }
+    cz_factory_loaded(t);
+    cz_track_accept(t);
+    fm6_track_loaded(t);
+}
+
 /* preset pi of upstream engine e into part 1, as ui.c engine_load_of and apply_preset_to: the
- * sound; not the steps, the arp or the mix of the part (hostsim host_preset) */
-static void load_preset(uint32_t e, uint32_t pi)
+ * sound; not the steps, the arp or the mix of the part (hostsim host_preset). fade: the voices
+ * sounding fade out over XF_BLOCKS on the old sound and the engine follows after them (voice.c
+ * engine_block, events_block releases the part: panic_req); else they stop at once (init). DRUM
+ * lays its state out by KIT (eng_drum.c drum_bytes: the 909, the SID kit, the lanes of the
+ * others), sized from the new values while the fade renders with the old ones: a change of
+ * layout under the hits cuts them instead of fading them. */
+static uint32_t drum_layout(const track_t *t) { return drum_is909(t) ? 1u : drum_issid(t) ? 2u : 3u; }
+static void load_preset(uint32_t e, uint32_t pi, int fade)
 {
     track_t *t = &trk[0];
     const engine_t *eng = ENGINES[e];
-    uint32_t i;
-    trk_all_off(t);
-    memset(t->v, 0, sizeof t->v);
+    uint32_t i, any = 0, drum = t->engine == ENGI_DRUM ? drum_layout(t) : 0;
+    if (fade) {
+        for (i = 0; i < NVOICE; ++i)
+            any |= t->v[i].active;
+        if (any && !t->xf_on) {
+            t->xf_on = 1; t->xf = XF_BLOCKS;
+            memcpy(fade_p, t->p, sizeof fade_p);
+        }
+        panic_req |= 1u;
+    } else {
+        trk_all_off(t);
+        memset(t->v, 0, sizeof t->v);
+    }
     for (i = 0; i < P_E0; ++i)
         t->p[i] = TP[i].def;
     t->user = 0; t->user_native = 0;
@@ -176,14 +209,42 @@ static void load_preset(uint32_t e, uint32_t pi)
         t->p[P_ED_FLT] = p->fenv;
         t->p[P_VOICE] = p->mono ? V_LEGATO : V_POLY;
     }
-    if (e == ENGI_PROPHET) { p5_ready[0] = 1; p5_preset_loaded(t, pi); }
-    cz_factory_loaded(t);
-    cz_track_accept(t);
-    fm6_track_loaded(t);
+    if (fade && drum && drum_layout(t) != drum) {   /* another DRUM layout under the hits: no fade */
+        trk_all_off(t);
+        memset(t->v, 0, sizeof t->v);
+        t->xf_on = t->xf = 0;
+    }
+    if (fade && t->xf_on && t->engine == e)
+        hooks_pending = 1;
+    else
+        load_hooks(t);
+    if (fade)
+        return;
     if (t->engine != t->eng_req)
         eng_state_clear(0);                 /* as voice.c engine_block on a switch */
     t->engine = t->eng_req;
     t->xf_on = t->xf = 0;
+}
+
+/* events_block lets go before it drains the queue: the note-ons still queued would start after the
+ * release (a CC 123 or a MIDI CH change in the same pass), so they go with it */
+static void melodee_release(void)
+{
+    uint32_t r, w;
+    if (!ready)
+        return;
+    for (r = w = mi_r; r != mi_w; ++r) {
+        uint32_t q = midi_in_q[r % MQ];
+        if (((q >> 8) & 0xF0u) == 0x90u && q >> 24)
+            continue;
+        midi_in_q[w % MQ] = q;
+        midi_in_ms[w % MQ] = midi_in_ms[r % MQ];
+        midi_in_time[w % MQ] = midi_in_time[r % MQ];
+        midi_in_source[w % MQ] = midi_in_source[r % MQ];
+        ++w;
+    }
+    mi_w = w;
+    panic_req |= (uint8_t)((1u << NTRK) - 1u);   /* events_block: every part lets go, the arp and the MIDI notes too */
 }
 
 static int melodee_init(uint32_t sample_rate)
@@ -218,7 +279,7 @@ static int melodee_init(uint32_t sample_rate)
     }
     fm6_init();
     ready = 1;
-    load_preset(ENGINE_ORDER[0], 0);
+    load_preset(ENGINE_ORDER[0], 0, 0);
     melodee_panic();
     return 0;
 }
@@ -239,6 +300,7 @@ static int melodee_midi(uint8_t status, uint8_t data1, uint8_t data2)
     } else {
         if (port_midi_ch && (status & 0x0F) != (uint32_t)(port_midi_ch - 1))
             return 0;                              /* another track of the FM-1: not this instrument */
+        if ((status & 0xF0) == 0xB0 && data1 >= 123) { melodee_release(); return 0; }   /* all notes off (and the modes) */
         cin = status >> 4;
     }
     if (mi_w - mi_r >= MQ) {
@@ -268,7 +330,19 @@ static void melodee_render(int16_t *stereo, size_t frames)
         if (pcm_pos == CTL) {
             int32_t block[2u * CTL];
             fm1_ms = (uint32_t)(rendered_frames * 1000u / FS);
-            mix_block(block, CTL);
+            if (hooks_pending && (!trk[0].xf_on || !trk[0].xf))
+                load_hooks(&trk[0]);                /* the fade ends in this block: the new patch first */
+            if (trk[0].xf_on && trk[0].xf) {        /* a fade block: the old sound's own values */
+                int16_t now[P_E0];
+                memcpy(now, trk[0].p, sizeof now);
+                memcpy(trk[0].p, fade_p, sizeof now);
+                mix_block(block, CTL);
+                for (i = 0; i < P_E0; ++i)          /* (a value MIDI set in the block stays) */
+                    if (trk[0].p[i] == fade_p[i])
+                        trk[0].p[i] = now[i];
+            } else {
+                mix_block(block, CTL);
+            }
             for (i = 0; i < 2u * CTL; ++i)
                 pcm[i] = silenced ? 0 : (int16_t)clamp(block[i], -32768, 32767);
             pcm_pos = 0;
@@ -292,8 +366,7 @@ static int melodee_set_preset(uint32_t engine, uint32_t preset)
     uint32_t e = engine_of(engine);
     if (!ready || e >= NENGINES || preset >= ENGINES[e]->npresets)
         return -1;
-    melodee_panic();
-    load_preset(e, preset);
+    load_preset(e, preset, 1);
     return 0;
 }
 static uint32_t melodee_preset_count(uint32_t engine)
@@ -398,6 +471,7 @@ static int melodee_param_set(uint32_t index, int32_t value)
 static const fm1_synth_api_t melodee_api = {
     .name = "MELODEE", .revision = "398ada1e09d864c12f3b778a43e45c7c2a8031b8",
     .init = melodee_init, .midi = melodee_midi, .render = melodee_render, .panic = melodee_panic,
+    .release = melodee_release,
     .set_preset = melodee_set_preset, .engine_count = melodee_engine_count,
     .preset_count = melodee_preset_count, .engine_name = melodee_engine_name,
     .preset_name = melodee_preset_name, .current_engine = melodee_current_engine,

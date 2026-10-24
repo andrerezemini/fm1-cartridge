@@ -33,6 +33,12 @@ compile_run() {
     run_logged "$name" "$OUT/$name"
 }
 
+# audio.c marks each DAC burst for the return's rate loop (the receiver tests call it as its interrupt does)
+grep -q 'uac_rx_burst();' firmware/src/audio.c || {
+    echo "FAIL: audio.c no longer marks the DAC burst (uac_rx_burst)" >&2
+    exit 1
+}
+
 for mode in native sanitizer; do
     if [ "$mode" = sanitizer ]; then
         [ "$SANITIZE" = 1 ] || continue
@@ -42,6 +48,7 @@ for mode in native sanitizer; do
     fi
     # The receiver gets the complete sanitizer set, without DSP exclusions.
     compile_run "receiver-$mode" tests/uac_rx_test.c $opts
+    compile_run "receiver-ramp-$mode" tests/uac_rx_ramp_test.c $opts
 
     # Every combination of playback/capture/CDC is a separate translation unit.
     # T_CDC=2 means compiled CDC with the runtime USB SERIAL option off.

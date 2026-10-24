@@ -14,9 +14,18 @@ CONFIG_ESP_CONSOLE_UART_BAUDRATE=115200
 CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
 CONFIG_FREERTOS_HZ=1000
 CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+# The log never spins a task on a full UART FIFO: main.c installs the driver with a TX ring, and
+# the lines carry no colour escapes. The audio profiles count MIDI and print the totals once a second;
+# the midi bench profile logs each channel message.
+CONFIG_LOG_COLORS=n
+# Isochronous audio: three URBs of two 1 ms packets, 6 ms in flight below the ring
+# (CONFIG_FM1_UAC_BUFFER_BYTES).
+CONFIG_UAC_NUM_PACKETS_PER_URB=2
 # Three firmware slots (partitions.csv) and the bootloader's rollback: a slot booted through
-# GLO > CARTRIDGE > FIRMWARE must answer the FM-1 once (slots.c fm1_slots_confirm) or the next
-# reset returns to the previous slot. The version string names the firmware on the FM-1's page.
+# GLO > CARTRIDGE > FIRMWARE must answer a cartridge request from the FM-1 (slots.c
+# fm1_slots_confirm) or the next reset returns to the previous slot; the bench profiles without a
+# synthesizer never answer, so they always roll back. The version string names the firmware on the
+# FM-1's page.
 CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
 CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y

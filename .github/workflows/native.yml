@@ -11,3 +11,24 @@ jobs:
       - run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DFM1_SANITIZE=ON
       - run: cmake --build build --parallel 2
       - run: ctest --test-dir build --output-on-failure
+  # Sloop's cartridge code (receiver, USB descriptors, CARTRIDGE page, cartridge track) on the host:
+  # the generated headers come from Sloop's own Python generators, no JieLi toolchain is needed.
+  sloop:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install Pillow
+      - name: Sloop generated headers
+        run: python -c "import sys; sys.path.insert(0, 'sloop-fm1/tools'); import build; build.generate()"
+      - name: Sloop cartridge tests (native and ASan/UBSan)
+        run: sh sloop-fm1/tests/run_cartridge_tests.sh
+      - name: Sloop UI against the real cartridge server
+        run: |
+          sh tools/test_sloop_cartridge.sh native
+          sh tools/test_sloop_cartridge.sh sanitizer

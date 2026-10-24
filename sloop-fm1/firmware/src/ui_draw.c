@@ -28,10 +28,15 @@ UI_SMALL static int32_t batt_level(void)                         /* ADC ch3 thre
     return song.batt_raw >= 591 ? 3 : song.batt_raw >= 561 ? 2 : song.batt_raw >= 531 ? 1 : 0;
 }
 /* charging (a USB host powers us; there is no charger status line): bars fill 1, 2, 3
- * every 0.6 s, so the header is redrawn twice a second at most; else the level */
+ * every 0.6 s, so the header is redrawn twice a second at most; else the level. The cartridge is a host
+ * that powers nothing: with it, the real level */
 UI_SMALL static int32_t batt_shown(void)
 {
+#if FELUCCA_CARTRIDGE
+    if (usb.config && !usb.suspended && !cart.online)
+#else
     if (usb.config && !usb.suspended)
+#endif
         return 1 + (int32_t)((fm1_ms / 600u) % 3u);
     return batt_level();
 }
@@ -825,7 +830,7 @@ UI_SMALL static void draw_foot(void)
     }
 #endif
     if (ui.home) {
-        str_cpy(ti, "HOME", sizeof ti);
+        str_cpy(ti, CART_TRACK(t) ? "CARTRIDGE" : "HOME", sizeof ti);   /* (its knobs, sound and LEVEL: GLO > CARTRIDGE) */
     } else {                                           /* page title + number in its family: "ENV DEST 2/2" */
         uint32_t n, k = page_pos(&n);
         const char *pt = pg->scope == SC_ENGINE ? e->page_title[pg->id[0] != P_E0] : 0;   /* EDIT: the engine's */

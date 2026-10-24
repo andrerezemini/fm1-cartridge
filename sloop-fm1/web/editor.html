@@ -2505,20 +2505,20 @@ async function backupRestore(rq, file, progress = () => {}) {
     const d = m.get(id), k = id - 32;
     if (!d.length) {
       const e = parse[CMD.SMP_ERASE](await rq(req.smpErase(k), { timeout: 2500, retries: 0 }));
-      if (e.rc) throw new BackupError("bkWrite", `erase USR${k + 1} rc ${e.rc}`);
+      if (e.rc) throw new BackupError(e.rc === 3 ? "bkStop" : "bkWrite", `erase USR${k + 1} rc ${e.rc}`);
       continue;
     }
     let r = parse[CMD.SMP_BEGIN](await rq(req.smpBegin(k), { timeout: 1000, retries: 0 }));
-    if (r.rc) throw new BackupError("bkWrite", `USR${k + 1} begin rc ${r.rc}`);
+    if (r.rc) throw new BackupError(r.rc === 3 ? "bkStop" : "bkWrite", `USR${k + 1} begin rc ${r.rc}`);
     const data = d.subarray(SMP.DATA_OFF);
     for (let off = 0; off < data.length; off += 256) {
       const w = parse[CMD.SMP_WRITE](await rq(req.smpWrite(k, SMP.DATA_OFF + off, data.subarray(off, off + 256)), { timeout: 1000, retries: 1 }));
-      if (w.rc) throw new BackupError("bkWrite", `USR${k + 1} write rc ${w.rc}`);
+      if (w.rc) throw new BackupError(w.rc === 5 ? "bkStop" : "bkWrite", `USR${k + 1} write rc ${w.rc}`);
       done += Math.min(256, data.length - off);
       progress(done, total);
     }
     r = parse[CMD.SMP_END](await rq(req.smpEnd(k, d.subarray(0, SMP.HDR_LEN)), { timeout: 2000, retries: 0 }));
-    if (r.rc) throw new BackupError("bkWrite", `USR${k + 1} end rc ${r.rc}`);
+    if (r.rc) throw new BackupError(r.rc === 7 ? "bkStop" : "bkWrite", `USR${k + 1} end rc ${r.rc}`);
   }
   return true;
 }
@@ -4718,6 +4718,7 @@ const TEXT = {
     chopHint: "スペース: 再生中に TAP（停止中は再生/停止）· 1–9 0: 試聴 · ダブルクリック: 追加 · ドラッグ: 移動 · ← →: 微調整 · K: 使う/外す · 下のつまみ: 長さ · Del: 削除 · ホイール: ズーム",
     smpTooBig: "大きすぎます", smpDecodeFail: "読み込めません: ", smpUploading: "書き込み中 USR", smpDone: "書き込みました USR",
     smpFail: "サンプルの書き込みに失敗しました: ", smpErased: "消去しました USR",
+    smpStop: "FM-1 の再生を止めてから、もう一度お試しください。",
     confirmErase: "USR{n} を消去しますか？", confirmUpload: "USR{n} に書き込みますか？ 今の内容は消えます。",
     layout: "（ファームウェアのパラメーター数が想定と違うため、簡易表示にしています）",
     ctlHelp: "スライダーはクリックしてからホイールか矢印キーで微調整（Shift で 10 ずつ）、ダブルクリックで初期値。",
@@ -5055,6 +5056,7 @@ const TEXT = {
     chopHint: "space: TAP while it plays (play/stop when stopped) · 1–9 0: listen · double-click: add · drag: move · ← →: nudge · K: keep / leave out · bottom handle: length · Del: remove · wheel: zoom",
     smpTooBig: "too large", smpDecodeFail: "Cannot read: ", smpUploading: "Uploading USR", smpDone: "Uploaded USR",
     smpFail: "Sample upload failed: ", smpErased: "Erased USR",
+    smpStop: "stop the FM-1 (PLAY), then try again.",
     confirmErase: "Erase USR{n}?", confirmUpload: "Write to USR{n}? Its current contents will be replaced.",
     layout: "(The firmware has a different parameter count; showing a plain list.)",
     ctlHelp: "Sliders: click, then fine-tune with the wheel or arrow keys (Shift: steps of 10); double-click resets.",
@@ -7672,7 +7674,10 @@ $("clearseq").addEventListener("click", async () => {
 /* ---------------------------------------------------------- samples --- */
 const smpDraft = [0, 1, 2, 3].map(() => ({ name: "", files: [] }));   /* USR1..USR4 */
 let smpBusy = false;
-const SMP_RC = { 1: "size", 2: "header", 3: "data CRC", 4: "flash", 5: "zones" };
+const SMP_RC = { 1: "size", 2: "header", 3: "data CRC", 4: "flash", 5: "zones", 6: "no SMP_BEGIN" };
+/* the sample commands refuse to write flash while the song plays: SMP_BEGIN / SMP_ERASE rc 3, SMP_WRITE rc 5,
+ * SMP_END rc 7 (EDITOR_PROTOCOL.md) */
+const smpErr = (what, rc, plays) => new Error(rc === plays ? t("smpStop") : `${what} rc ${rc}`);
 const kib = (n) => (n / 1024).toFixed(1);
 
 /* auto key split, as in buildSlot (for the preview) */
@@ -8229,7 +8234,7 @@ async function kitSend() {
     const k = ks[j];
     if (!parts[j].length) {
       busy++;
-      try { const r = parse[CMD.SMP_ERASE](await rq(req.smpErase(k), { timeout: 2500, retries: 0 })); if (r.rc) throw new Error("erase rc " + r.rc); await smpInfo(); }
+      try { const r = parse[CMD.SMP_ERASE](await rq(req.smpErase(k), { timeout: 2500, retries: 0 })); if (r.rc) throw smpErr("erase", r.rc, 3); await smpInfo(); }
       catch (e) { done = false; report(e); } finally { busy--; }
       continue;
     }
@@ -8278,16 +8283,16 @@ async function smpUpload(k, prog, ask = true, d = smpDraft[k]) {   /* (d: the DR
   try {
     const t0 = performance.now();
     let r = parse[CMD.SMP_BEGIN](await rq(req.smpBegin(k), { timeout: 1000, retries: 0 }));
-    if (r.rc) throw new Error("begin rc " + r.rc);
+    if (r.rc) throw smpErr("begin", r.rc, 3);
     for (let off = 0; off < data.length; off += 256) {
       const a = SMP.DATA_OFF + off;
       const w = parse[CMD.SMP_WRITE](await rq(req.smpWrite(k, a, data.subarray(off, off + 256)), { timeout: 1000, retries: 1 }));
-      if (w.rc) throw new Error(`write at 0x${a.toString(16)} rc ${w.rc}`);
+      if (w.rc) throw smpErr(`write at 0x${a.toString(16)}`, w.rc, 5);
       prog.value = (off + 256) / data.length;
       sayK("smpUploading", `${k + 1}  ${kib(Math.min(data.length, off + 256))} / ${kib(data.length)} KiB`);
     }
     r = parse[CMD.SMP_END](await rq(req.smpEnd(k, hdr), { timeout: 2000, retries: 0 }));
-    if (r.rc) throw new Error(`end rc ${r.rc} (${SMP_RC[r.rc] || "?"})`);
+    if (r.rc) throw r.rc === 7 ? smpErr("end", 7, 7) : new Error(`end rc ${r.rc} (${SMP_RC[r.rc] || "?"})`);
     sayK("smpDone", `${k + 1}  ${((performance.now() - t0) / 1000).toFixed(1)} s`);
     done = true;
   } catch (e) {
@@ -8309,7 +8314,7 @@ async function smpErase(k) {
   renderSamples();
   try {
     const r = parse[CMD.SMP_ERASE](await rq(req.smpErase(k), { timeout: 2500, retries: 0 }));
-    if (r.rc) throw new Error("erase rc " + r.rc);
+    if (r.rc) throw smpErr("erase", r.rc, 3);
     sayK("smpErased", String(k + 1));
   } catch (e) {
     if (e.message !== "closed") sayK("smpFail", e.message);

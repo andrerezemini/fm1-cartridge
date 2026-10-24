@@ -121,17 +121,37 @@ static void felucca_panic(void)
 }
 
 /* preset pi of upstream engine e into part 1, as ui.c apply_preset_to and set_engine_of: the sound
- * and its sends; not the steps, the arp or the mix of the part (hostsim host_preset) */
-static void load_preset(uint32_t e, uint32_t pi)
+ * and its sends; not the steps, the arp or the mix of the part (hostsim host_preset). fade: the voices
+ * sounding fade out over XF_BLOCKS on the old sound and the engine follows after them (voice.c
+ * engine_block, events_block releases the part: panic_req); else they stop at once (init) */
+/* FM6's patch for a preset (fm6_track_loaded, and fm6_poll for a SLOT that changed) waits while the
+ * old sound of the same engine fades out: loaded under it, it clicks (felucca_render applies it at the
+ * end of the fade, before the notes held for it start) */
+static uint8_t fm6_pending;
+/* Upstream's fade renders the old sound with the old engine values (pe_old) and the new common ones;
+ * here the common ones of the fading sound too (its filter type, envelope, effects), as Clipper's
+ * sound_fade_begin does: kept from the fade's start and put back for each of its blocks (felucca_render) */
+static int16_t fade_p[P_E0];
+static void load_preset(uint32_t e, uint32_t pi, int fade)
 {
     track_t *t = &trk[0];
     const engine_t *eng = ENGINES[e];
     const preset_t *p;
     static const uint8_t FX_DEF[4] = {0, 24, 28, 36};
-    uint32_t i;
+    uint32_t i, any = 0;
     if (e == ENGI_SAMPLE && pi == SMP_SET_PERC) { e = ENGI_DRUM; pi = 0; eng = ENGINES[e]; }   /* (retired PERC: the kit) */
-    trk_all_off(t);
-    memset(t->v, 0, sizeof t->v);
+    if (fade) {
+        for (i = 0; i < NVOICE; ++i)
+            any |= t->v[i].active;
+        if (any && !t->xf_on) {
+            t->xf_on = 1; t->xf = XF_BLOCKS;
+            memcpy(fade_p, t->p, sizeof fade_p);
+        }
+        panic_req |= 1u;
+    } else {
+        trk_all_off(t);
+        memset(t->v, 0, sizeof t->v);
+    }
     for (i = 0; i < P_E0; ++i)
         t->p[i] = TP[i].def;
     t->user = 0;
@@ -153,10 +173,35 @@ static void load_preset(uint32_t e, uint32_t pi)
         for (i = 0; i < 4u; ++i)
             t->p[P_DIST + i] = (int16_t)(p->fx[i] ? p->fx[i] - 1 : FX_DEF[i]);
     }
-    fm6_track_loaded(t);
+    if (fade && t->xf_on && t->engine == t->eng_req)
+        fm6_pending = 1;                    /* the old FM6 sound fades out on its own patch: the new one after it */
+    else
+        fm6_pending = 0, fm6_track_loaded(t);
+    if (fade)
+        return;
     t->engine = t->eng_req;
     t->xf_on = t->xf = 0;
     eng_mem_claim(t);
+}
+
+/* events_block lets go before it drains the queue: the note-ons still queued would start after the
+ * release (a CC 123 or a MIDI CH change in the same pass), so they go with it */
+static void felucca_release(void)
+{
+    uint32_t r, w;
+    if (!ready)
+        return;
+    for (r = w = mi_r; r != mi_w; ++r) {
+        uint32_t q = midi_in_q[r % MQ];
+        if (((q >> 8) & 0xF0u) == 0x90u && q >> 24)
+            continue;
+        midi_in_q[w % MQ] = q;
+        midi_in_ms[w % MQ] = midi_in_ms[r % MQ];
+        midi_in_source[w % MQ] = midi_in_source[r % MQ];
+        ++w;
+    }
+    mi_w = w;
+    panic_req |= (uint8_t)((1u << NTRK) - 1u);   /* events_block: every part lets go, the arp and the MIDI notes too */
 }
 
 static int felucca_init(uint32_t sample_rate)
@@ -191,7 +236,7 @@ static int felucca_init(uint32_t sample_rate)
     }
     fm6_init();
     ready = 1;
-    load_preset(0, 0);
+    load_preset(0, 0, 0);
     felucca_panic();
     return 0;
 }
@@ -212,6 +257,7 @@ static int felucca_midi(uint8_t status, uint8_t data1, uint8_t data2)
     } else {
         if (port_midi_ch && (status & 0x0F) != (uint32_t)(port_midi_ch - 1))
             return 0;                              /* another track of the FM-1: not this instrument */
+        if ((status & 0xF0) == 0xB0 && data1 >= 123) { felucca_release(); return 0; }   /* all notes off (and the modes) */
         cin = status >> 4;
     }
     if (mi_w - mi_r >= MQ) {
@@ -240,8 +286,21 @@ static void felucca_render(int16_t *stereo, size_t frames)
         if (pcm_pos == CTL) {
             int32_t block[2u * CTL];
             fm1_ms = (uint32_t)(rendered_frames * 1000u / FS);
-            fm6_poll();
-            mix_block(block, CTL);
+            if (fm6_pending && (!trk[0].xf_on || !trk[0].xf))
+                fm6_pending = 0, fm6_track_loaded(&trk[0]);   /* the fade ends in this block: the new patch first */
+            if (!fm6_pending)
+                fm6_poll();
+            if (trk[0].xf_on && trk[0].xf) {        /* a fade block: the old sound's own values */
+                int16_t now[P_E0];
+                memcpy(now, trk[0].p, sizeof now);
+                memcpy(trk[0].p, fade_p, sizeof now);
+                mix_block(block, CTL);
+                for (i = 0; i < P_E0; ++i)          /* (a value MIDI set in the block stays) */
+                    if (trk[0].p[i] == fade_p[i])
+                        trk[0].p[i] = now[i];
+            } else {
+                mix_block(block, CTL);
+            }
             for (i = 0; i < 2u * CTL; ++i)
                 pcm[i] = silenced ? 0 : (int16_t)clamp(block[i], -32768, 32767);
             pcm_pos = 0;
@@ -265,8 +324,7 @@ static int felucca_set_preset(uint32_t engine, uint32_t preset)
     uint32_t e = engine_of(engine);
     if (!ready || e >= NENGINES || preset >= ENGINES[e]->npresets)
         return -1;
-    felucca_panic();
-    load_preset(e, preset);
+    load_preset(e, preset, 1);
     return 0;
 }
 static uint32_t felucca_preset_count(uint32_t engine)
@@ -335,6 +393,17 @@ static uint32_t felucca_param_count(void)
     if (ready) remote_desc(UINT32_MAX, &v, &n, &g);
     return n;
 }
+/* SAMPLE SET, GRAIN SRC and SLICE SRC values with no material here: the user slots USR1..USR3 (the port
+ * has no flash slots: they would play the stand-in sine), a set without data. Never selected; the
+ * cartridge server steps over them in the turn's direction. */
+static int no_material(const param_desc_t *d, int32_t value)
+{
+    if (d->names == SMP_ALL_NAMES)
+        return smp_set_missing((uint32_t)value);
+    if (d->names == N_SLC_SRC)
+        return !slc_get((uint32_t)value);
+    return 0;
+}
 static int felucca_param_get(uint32_t index, fm1_param_t *out)
 {
     uint32_t id; int16_t *v; const char *group, *unit;
@@ -342,6 +411,7 @@ static int felucca_param_get(uint32_t index, fm1_param_t *out)
     if (!d || !out) return -1;
     memset(out, 0, sizeof *out);
     out->min = d->min; out->max = d->max; out->value = (int16_t)clamp(*v, d->min, d->max);
+    while (out->max > out->value && no_material(d, out->max)) out->max--;   /* (the list ends at its last source) */
     str_cpy(out->name, group, sizeof out->name);
     uint32_t n = str_len(out->name);
     if (id >= P_M1SRC && id <= P_M4AMT) { fmt_int(out->name + n, (int32_t)((id - P_M1SRC) / 3u + 1u)); n = str_len(out->name); }
@@ -358,7 +428,7 @@ static int felucca_param_set(uint32_t index, int32_t value)
 {
     uint32_t id; int16_t *v; const char *group;
     const param_desc_t *d = ready ? remote_desc(index, &v, &id, &group) : NULL;
-    if (!d || value < d->min || value > d->max) return -1;
+    if (!d || value < d->min || value > d->max || (value != *v && no_material(d, value))) return -1;
     *v = (int16_t)value;
     return 0;
 }
@@ -366,6 +436,7 @@ static int felucca_param_set(uint32_t index, int32_t value)
 static const fm1_synth_api_t felucca_api = {
     .name = "FELUCCA", .revision = "63f88ec18b71c6ed4371d03d6f04dd93f4193ad3",
     .init = felucca_init, .midi = felucca_midi, .render = felucca_render, .panic = felucca_panic,
+    .release = felucca_release,
     .set_preset = felucca_set_preset, .engine_count = felucca_engine_count,
     .preset_count = felucca_preset_count, .engine_name = felucca_engine_name,
     .preset_name = felucca_preset_name, .current_engine = felucca_current_engine,

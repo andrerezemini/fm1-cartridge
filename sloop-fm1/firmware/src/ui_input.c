@@ -410,7 +410,14 @@ UI_SMALL static void edit_param(uint32_t slot, int32_t steps)
     uint32_t id = pg->id[slot];
     int32_t v;
 #if FELUCCA_CARTRIDGE
-    if (pg->scope == SC_CART) { cart_turn(slot, steps); return; }
+    if (pg->scope == SC_CART) {                           /* knob acceleration on the cartridge's lists and values */
+        const uint8_t *v = cart.view;
+        char c = (char)v[CART_VAL_NAME];
+        int32_t range = slot == 0 ? v[CART_NENG] : slot == 1 ? cart_u14(v + CART_NPRE) : slot == 2 ? cart_u14(v + CART_NPAR)
+                      : (c >= '0' && c <= '9') || c == '-' || c == '+' ? cart_s14(v + CART_MAX) - cart_s14(v + CART_MIN) : 0;
+        cart_turn(slot, accel(EN_K1 + slot, steps, range));
+        return;
+    }
 #endif
     if (is_drum(TSEL) && !page_for_drum(pg))
         return;                                           /* "DRUM TRACK": nothing to edit here */

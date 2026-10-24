@@ -124,8 +124,9 @@ static void fm1_wdt_stop(void) { fm1_p33_write(FM1_P3_WDT_CON, 0); }
  * touched, with the P33 OR / AND operations (no read-modify-write): the bandgap and the voltage / current selections
  * stay as the boot left them, and the charger comes back exactly as it was. The register lives in the P33 domain and
  * keeps its value over a soft reset (as P3_WDT_CON does): whoever clears it puts it back before a reset
- * (cartridge.c keeps the boot state in .noinit for a crash or watchdog reset). SLOOP never set these bits before:
- * the bit's value at boot is whatever the ROM / uboot / hardware default left. Untested on the SoC so far */
+ * (cartridge.c keeps the boot state in .noinit for a crash or watchdog reset). The bit's value at boot is whatever
+ * the ROM / uboot / hardware default left, or a power-off that kept P33 while CHARGE AUTO held it off; the cartridge
+ * build sets it at start when it finds it off (CHARGE starts at ON). Untested on the SoC so far */
 #define FM1_P3_CHG_CON0 0x1Au
 static uint32_t fm1_charge_en(void) { return fm1_p33_read(FM1_P3_CHG_CON0) & 1u; }
 static void fm1_charge_set(uint32_t en)

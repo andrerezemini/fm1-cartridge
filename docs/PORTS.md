@@ -44,12 +44,13 @@ Clipper adapter also exports the same calls as named functions (`clipper_synth_i
 | Call | Behaviour in the three ports |
 | --- | --- |
 | `init(rate)` | 44,100 Hz only; any other rate returns `-1` and keeps the current state |
-| `midi(status, data1, data2)` | Queues channel messages (notes, pressure, control change, pitch bend) and `F8/FA/FB/FC`; `FF` and CC 120 run panic. Program Change returns `-1`; Clipper also rejects CC 20 (MORPH), which its UI drives. Returns `0` accepted, `-1` invalid or unsupported (or before `init`), `-2` queue full |
+| `midi(status, data1, data2)` | Queues channel messages (notes, pressure, control change, pitch bend) and `F8/FA/FB/FC`; `FF` and CC 120 run panic; CC 123 to 127 on the instrument's channel let go of its notes (`release`; in Clipper, upstream's own handling). Program Change returns `-1`; Clipper also rejects CC 20 (MORPH), which its UI drives. Returns `0` accepted, `-1` invalid or unsupported (or before `init`), `-2` queue full |
 | `render(stereo, frames)` | Interleaved stereo PCM16, any frame count including zero; the DSP keeps its 32-frame blocks, so the output does not depend on how the caller splits the calls. Silence before `init` and after panic, until a new Note On |
 | `panic()` | Ends voices, queued events, held notes and effect tails; keeps the selected sound |
-| `set_preset(engine, preset)` | Selects an engine and a factory preset; runs panic first; `-1` for an invalid index |
+| `release()` | Every sounding note lets go at the next block, as a note-off would (upstream's per-track release request, `panic_req`, with the arpeggiator, KBD HOLD and the MIDI note owners); a note-on still in the queue is dropped with them (upstream lets go before it drains the queue, so it would start after the release); tails, the rest of the queue and the sound kept. The cartridge server calls it on a MIDI CH change |
+| `set_preset(engine, preset)` | Selects an engine and a factory preset; `-1` for an invalid index. What sounds fades out over upstream's engine-switch fade (2.9 ms; 5.8 ms in Clipper, with its own sound fade), on its own values: Felucca and Melodee put the old sound's common values back for the fade's blocks (upstream keeps only the engine's) and load the new FM6, PROPHET and CZ-1 patch after it. The engine follows, the effect tails and the MIDI already queued are kept. In Melodee a DRUM kit of another layout (909, SID, the others) cuts the hits instead, since the kit sizes the engine's state |
 | `engine_count/name`, `preset_count/name`, `current_engine/preset` | The catalogue. Clipper indexes engines by their upstream IDs. Felucca and Melodee use the upstream display order (`ENGINE_ORDER`), so retired engines (DIGITAL in Felucca; ANALOG, DIGITAL and the legacy extras in Melodee) are not offered |
-| `param_count/get/set` | The remote catalogue that the CARTRIDGE page edits: group, name, value text, unit and range, taken from the upstream parameter descriptors. Entry 0 is always `MIDI CH`. `param_set` returns `-1` outside the range |
+| `param_count/get/set` | The remote catalogue that the CARTRIDGE page edits: group, name, value text, unit and range, taken from the upstream parameter descriptors. Entry 0 is always `MIDI CH`. `param_set` returns `-1` outside the range, and in Felucca for SAMPLE SET, GRAIN SRC and SLICE SRC values with no material (the user slots, which the port cannot fill); the range those report ends at their last source |
 | `set_midi_channel`, `midi_channel` | 0 answers every channel (OMNI), 1..16 one channel; realtime messages are never filtered |
 | `name`, `revision` | `CLIPPER`, `FELUCCA` or `MELODEE`, and the upstream commit of the port |
 
@@ -65,9 +66,18 @@ serially on one core: the AC7911's second core, its barriers and its traps are n
 FreeRTOS.
 
 Before each 32-frame block the adapters call what the upstream render loop calls: Clipper runs
-`fm6_poll()` and `wt_service()` before `mix_block()`, Felucca runs `fm6_poll()` before
-`mix_block()`, and Melodee runs `mix_block()` alone. A change to an adapter keeps these calls or
-takes over their work explicitly. In Clipper's upstream `tests/hostsim.c`, synthesizer mode needs
+`fm6_poll()` and its own `port_wt_service()` before `mix_block()`, Felucca runs `fm6_poll()` before
+`mix_block()` (held while a fade waits to load the new FM6 patch), and Melodee runs `mix_block()`
+alone (after loading a patch that waited for a fade). Upstream's `wt_service` builds four WAVE frames
+a main-loop pass on the FM-1, seven inverse FFTs each; called from every block of a real-time render
+it would build a whole table in one or two 64-frame calls. `port_wt_service` makes the same copies
+bit for bit (upstream's load, transform and rounding, the twiddles from a table) in steps of at most
+1,024 butterflies a block, and the WAVE voices stay silent until the table is complete, about 120 ms
+of audio, as upstream's do while it builds; `port_wt_hold()` keeps the part's duck holding for that
+long (upstream's gives up after 68 blocks), so the voices come back through its fade-in.
+`tests/test_clipper.c` compares every factory table with upstream's `wt_build_frame` and checks the
+fade-in. A change to an adapter keeps these calls or takes over their work
+explicitly. In Clipper's upstream `tests/hostsim.c`, synthesizer mode needs
 `CLIPPER_SYNTH=1`; the default legacy mode there does not exercise the Clipper synthesizer.
 
 ## What each adapter compiles
@@ -112,7 +122,8 @@ Per port:
   the dual-core Prophet with 8 voices; the retired engines.
 
 The CARTRIDGE page takes the place of the upstream editing: its own SysEx protocol selects engines
-and presets and edits parameters in the ESP32's RAM; nothing is stored. A CC accepted by the queue
+and presets and edits parameters in the ESP32's RAM, and the firmware keeps that state in NVS
+(`synth/cartridge_state.c`, through the same interface). A CC accepted by the queue
 does not create a new parameter map: the DSP answers only the controls upstream implements.
 
 ## Native verification
@@ -120,16 +131,21 @@ does not create a new parameter map: the DSP answers only the controls upstream 
 CTest runs three tests per port:
 
 - `synth_<port>` (`tests/test_synth.c`): silence before `init`, rate rejection, every offered
-  engine sounding with its first factory preset, release by Note Off and by velocity zero, the
-  channel filter and the `MIDI CH` entry, identical PCM for any call size, recovery after a queue
-  overflow, and panic by CC 120.
+  engine sounding with its first factory preset, release by Note Off and by velocity zero,
+  `release()` with a note-on still queued, All Notes Off and CC 124..127 on the instrument's channel
+  only (pedal held or not), preset changes under a chord that fade without a step above 3.5 times the
+  sound's own (the first twelve presets of each engine, DRUM's without crashing) and keep the queued
+  MIDI, the channel filter and the
+  `MIDI CH` entry, identical PCM for any call size, recovery after a queue overflow, and panic by
+  CC 120.
 - `cartridge_<port>` (`tests/test_cartridge.c`): the cartridge server over that port, with
   simulated slots.
 - `simulation_<port>` (`tests/test_simulation.py`): the WAV and the report of
   `cartridge_sim_<port>`, checked beyond the exit code.
 
 `clipper` (`tests/test_clipper.c`) covers Clipper's named functions, and `upstream_integrity`
-(`tools/check_upstream.py`) compares the three subsets with their SHA-256 manifests. The 13 tests
+(`tools/check_upstream.py`) compares the three subsets with their SHA-256 manifests; `protocol`,
+`audio_return`, `pipeline` and `wire_identity` cover the rest ([VALIDATION.md](VALIDATION.md)). The 15 tests
 pass in Release and with ASan/UBSan. They confirm the behaviour of the adapters; they do not
 certify every preset, the sound quality or real time on the ESP32. The
 [simulator](SIMULATION.md) renders WAV files and fault scenarios for each port.
@@ -138,7 +154,7 @@ certify every preset, the sound quality or real time on the ESP32. The
 
 Each synthesizer has its own ESP-IDF profile (`clipper`, `felucca`, `melodee`, and the `-4m2m`
 variants for the Super Mini prototype with 4 MB of flash and 2 MB of quad PSRAM); see
-[firmware/README.md](../firmware/README.md). The real-time budget is 2,902 µs per 128 frames. The
+[firmware/README.md](../firmware/README.md). The real-time budget is 1,451 µs per 64 frames. The
 profiles build with `-O2`, a 32 KB instruction cache and a 64 KB data cache, and keep the hot
 synthesis state (voices, engines, tracks, effect state) in internal RAM. Only buffers that are
 large and read sequentially, or not touched per sample, go to PSRAM: random per-sample access to
@@ -148,8 +164,8 @@ large and read sequentially, or not touched per sample, go to PSRAM: random per-
 | --- | --- | --- | --- |
 | In PSRAM | The large delay and wavetable buffers (`firmware/main/clipper.lf`) | The large delay and loop buffers (`firmware/main/felucca.lf`) | The sequencer's pattern pool and recording lists (`firmware/main/melodee.lf`) |
 | In internal RAM | Voice, engine, track and effect state | Voice, engine (`eng_mem`), track and effect state | The audio arena (engine voice state and FX slots), tracks and mixer |
-| Image, `-4m2m` profile | 727,712 B (44% of a 1.25 MB slot free) | 558,976 B (57% free) | 526,768 B (60% free) |
-| Internal RAM (DIRAM) used | 142 KB of 341 KB | 177 KB of 341 KB | 229 KB of 341 KB |
+| Image, `-4m2m` profile | 771,904 B (41% of a 1.25 MB slot free) | 603,424 B (54% free) | 571,168 B (56% free) |
+| Internal RAM (DIRAM) used | 152 KB of 341 KB | 183 KB of 341 KB | 235 KB of 341 KB |
 
 Observed on hardware: Clipper notes from the FM-1 keyboard play through the FM-1 with a clean
 sound; the MIDI channel filter keeps the FM-1's other tracks on their internal sound; the

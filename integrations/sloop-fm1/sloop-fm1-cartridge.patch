@@ -1,14 +1,15 @@
 diff --git a/README.md b/README.md
-index 6aa65db..e9e9928 100644
+index 6aa65db..afb6053 100644
 --- a/README.md
 +++ b/README.md
-@@ -1,3 +1,10 @@
-+> **ESP32 cartridge development branch:** adds optional USB audio playback from
-+> Clipper on an ESP32-S3 host. See [cartridge operation](docs/CARTRIDGE_USB_RETURN.md)
-+> and [build / validation](docs/CARTRIDGE_BUILD.md). The dedicated profile keeps
-+> MIDI and receives stereo 44.1 kHz audio; USB capture and CDC are disabled in
-+> that profile. Hardware playback has not been validated. The upstream installer
-+> linked below does not install this local branch.
+@@ -1,3 +1,11 @@
++> **Cartridge profile (`build-cartridge.sh`):** USB audio playback from an ESP32-S3
++> cartridge into the mixer, the GLO → CARTRIDGE page for the cartridge's three firmwares
++> (Clipper, Melodee, Felucca), the cartridge track and HOME → USB → CHARGE. USB capture and
++> CDC are off in that profile. See [cartridge operation](docs/CARTRIDGE_USB_RETURN.md) and
++> [build / validation](docs/CARTRIDGE_BUILD.md); what is observed and what is still unverified
++> on the hardware is in the cartridge project's `docs/ROADMAP.md`. The upstream installer
++> linked below does not install this build.
 +
  <p align="center"><img src="assets/logo/sloop-logo.png" alt="SLOOP" width="420"></p>
  
@@ -35,10 +36,10 @@ index 0000000..eda41bd
 +exec sh ./build.sh "$@"
 diff --git a/docs/CARTRIDGE_BUILD.md b/docs/CARTRIDGE_BUILD.md
 new file mode 100644
-index 0000000..58784c4
+index 0000000..40ab1ce
 --- /dev/null
 +++ b/docs/CARTRIDGE_BUILD.md
-@@ -0,0 +1,117 @@
+@@ -0,0 +1,133 @@
 +# Building and testing the cartridge profile
 +
 +This tree is Sloop 2.7.1 (`https://github.com/isod89/sloop-fm1.git`, revision
@@ -89,9 +90,9 @@ index 0000000..58784c4
 +
 +| Resource | Upstream 2.7.1 | Cartridge profile | Diagnostic build | Limit |
 +| --- | ---: | ---: | ---: | ---: |
-+| App image | 577,920 B | **579,952 B** | 580,064 B | 581,564 B |
-+| Free flash | 3,644 B | **1,612 B** | 1,500 B | |
-+| RAM `.data + .bss` | 58,892 B | 60,844 B | 60,876 B | 98,304 B |
++| App image | 577,920 B | **581,096 B** | 581,244 B | 581,564 B |
++| Free flash | 3,644 B | **468 B** | 320 B | |
++| RAM `.data + .bss` | 58,892 B | 60,892 B | 60,924 B | 98,304 B |
 +| Low RAM | 22,772 B | 22,772 B | 22,772 B | 29,488 B after the RAM code |
 +| Pool | 333,900 B | 333,900 B | 333,900 B | 344,064 B, at least 8,192 B free |
 +| Free pool | 10,164 B | 10,164 B | 10,164 B | |
@@ -102,8 +103,8 @@ index 0000000..58784c4
 +additional memory is in normal RAM; the pool keeps its reserve.
 +
 +SHA-256 of the cartridge package built from this tree: `felucca.bin`
-+`51b801abdff65a06b646db0974b1377669ba7dd26a30af27817bc435d6d6b441`, `felucca.fwsc`
-+`012ee2b60c941650aeca2eb9064bbcbd1b6fba5c64f2594bca3df8729269d3d2`. Sources that use
++`05dc238006da0c931d654b17c6664e9467fe6cd8f99551f3babf5410354aca58`, `felucca.fwsc`
++`8a9210c271e8b07c4076ac1bd5a07d6dd67d783694070e585345b595bf1a4e8c`. Sources that use
 +`__DATE__`/`__TIME__` change the hashes of a rebuild.
 +
 +## Native tests
@@ -117,24 +118,39 @@ index 0000000..58784c4
 +
 +- Receiver: packet validation, order/channels, slot and index wrap, gain, numeric overflow,
 +  disconnection, silence, reactivation and reset preemption during consumption; each clock
-+  scenario of -1,000/0/+1,000 ppm runs 120 simulated seconds without underrun or overrun. A
-+  ±10,000 ppm case exceeds the available correction and checks the bounded recovery, with no
-+  access outside the buffers; it produces losses/reprimes, as expected.
++  scenario of -1,000/0/+1,000 ppm runs 120 simulated seconds without underrun or overrun, with
++  the rate loop reading the occupancy as each burst begins. A ±10,000 ppm case exceeds the
++  available correction and checks the bounded recovery, with no access outside the buffers; it
++  produces losses/reprimes, as expected. A closed-loop model (bursts rendered in 10 % to 80 % of
++  their period, the host's packets at any phase) starts every stream on a burst's first block at
++  the aim, within 0.95 cent; with the render varying from 0.8 to 3.8 ms a burst, 0.26 cent at the
++  start and a steady wobble of 0.15 cent peak to peak. The test runner also checks that `audio.c`
++  marks each burst (`uac_rx_burst`). These run with the gain applied at once (`UAR_RAMP 0`);
++  `tests/uac_rx_ramp_test.c` checks the 5.8 ms fade-in of a start and of a re-prime and the gain's
++  glide over a block, for USB RETURN and for the cartridge track's LEVEL.
 +- USB: 24 combinations of playback on/off, capture on/off, CDC on/off/hidden and capture rates.
 +  Descriptors, EP0, controls, altsettings and mocked DMA are tested. The descriptors with CDC
 +  disabled from the menu match byte for byte those of the build without CDC.
 +- Real mixer: RX disabled or zero gain preserve the reference hash `d098dd7f4a0fcc65`; an active
 +  return modifies the audio and gives the same result for splits 0, 15 and automatic, including
 +  with core 1 simulated by a thread with delays. Each block is consumed once.
-+- Real menu: four capture/CDC variants, knob limits, mute/unmute, visual refresh and tab width.
-+  The gain does not change the persisted settings word.
++- Real menu: four capture/CDC variants, knob limits, mute and unmute back to the level it had,
++  visual refresh and tab width. The gain does not change the persisted settings word.
 +- CARTRIDGE page (`tests/cartridge_ui_test.c`): page number among the GLO pages, firmware name
 +  and slots from the reply, the FIRMWARE row and footer, request/retry/timeout/reconnection,
-+  stale replies, no LCD writes when idle, and the charger sequence with a simulated HAL.
++  stale replies, a newer cartridge's longer reply, the header following the stream (OK / NO
++  AUDIO), no LCD writes when idle, and the charger sequence with a simulated HAL (ON by default,
++  a charger found off at start turned back on, AUTO).
 +- Cartridge track (same test): the track on the reply's MIDI channel, its names, notes over MIDI
 +  with the engine silent and no double send at OUT = SEQ, steps played with OUT at KEYS, STOP,
-+  MUTE, PRESETS on HOME and on the PRESETS page (crossing into the next and previous engine), OMNI
-+  and the handover back to the internal engine.
++  MUTE, PRESETS on HOME and on the PRESETS page (crossing into the next and previous engine, and a
++  second turn dropped while it crosses, a crossing dropped whole by a page entry), OMNI and the
++  handover back to the internal engine, the All Notes Off at takeover, a panic during a preset fade,
++  a note-off lost on a full ring, the autosave guard (`cart_quiet`), the battery level with the
++  cartridge, the clock and transport with CLOCK at OFF and START on a bar line for a cartridge that
++  comes back mid-song, LEVEL and MUTE on the return and the track's meter, the 5 s liveness query
++  (a PRESETS turn during it kept), the query when the page is left, a signed value's knob
++  acceleration, and recovery within 4 s after each of six outages in a row.
 +
 +The receiver and USB use the full ASan/UBSan set. Mixer and UI repeat only the upstream exclusions
 +of `shift-base` and `signed-integer-overflow`, because of the existing two's-complement DSP
@@ -150,18 +166,19 @@ index 0000000..58784c4
 +
 +## Limits of the cost evidence
 +
-+`tests/target_budget.py` estimates the assembly cost without changing its budgets: `mix_block`
-+has 3,432 instructions upstream and 3,532 in the cartridge profile; `mix_units` stays at 240;
-+`uac_rx_service` has 153 instructions, 73 inside loops and no hardware division in those loops.
++`tests/target_budget.py` estimates the assembly cost without changing its budgets; its counting run
++on this profile's listing gives `mix_block`, which inlines the receiver's `uac_rx_mix`, 3,661
++instructions (3,432 upstream); `mix_units` 249; `uac_rx_service` 143 instructions, 12 inside loops
++and no hardware division in those loops.
 +These numbers do not measure cycles, worst case or deadlines; inlining and heuristic loop
 +detection change the estimator's weights. The ASRC cost must be measured on the FM-1 with the
 +engines and effects active.
 diff --git a/docs/CARTRIDGE_CONTROL.md b/docs/CARTRIDGE_CONTROL.md
 new file mode 100644
-index 0000000..8526371
+index 0000000..deea73f
 --- /dev/null
 +++ b/docs/CARTRIDGE_CONTROL.md
-@@ -0,0 +1,32 @@
+@@ -0,0 +1,37 @@
 +# CARTRIDGE page
 +
 +Profile `sh build-cartridge.sh`: defines `FELUCCA_CARTRIDGE=1`, playback RX=1, capture=0 and
@@ -171,24 +188,29 @@ index 0000000..8526371
 +Tap GLO and use SELECT to reach CARTRIDGE. Knobs 1/2 choose engine/preset, 3 chooses
 +a parameter and 4 changes its value on the ESP32. The keyboard keeps sending MIDI notes. The
 +header shows the page number among the GLO pages and, once the cartridge answers, the name of the
-+firmware it runs (CLIPPER OK, MELODEE OK, FELUCCA OK); NO LINK means there is no valid
-+answer. The parameter FIRMWARE (knob 3) and knob 4 pick the ESP32 firmware slot to boot. The other
-+pages keep controlling Sloop.
++firmware it runs (CLIPPER OK, MELODEE OK, FELUCCA OK), or NO AUDIO after the name while the
++playback stream is at alt 0; NO LINK means there is no valid answer. The parameter FIRMWARE
++(knob 3) and knob 4 pick the ESP32 firmware slot to boot. The knobs accelerate as Sloop's own. The
++other pages keep controlling Sloop.
 +
 +The track on the cartridge's MIDI channel (from the reply) is the cartridge track: its notes go
 +out over MIDI, its engine stays silent, it shows the cartridge's names, and PRESETS (HOME, TRACKS,
-+the PRESETS page) browses the cartridge's presets across engines. See the cartridge project's
-+`docs/CARTRIDGE.md`.
++the PRESETS page) browses the cartridge's presets across engines; its LEVEL and MUTE set the USB
++return and its meter shows it; Sloop sends the cartridge START, STOP and the clock while it answers.
++See the cartridge project's `docs/CARTRIDGE.md`.
 +
-+The FM-1 and the ESP32 run the same protocol version. Sound changes are made live, without
-+reflashing. Edits live in RAM on the ESP32; they are not part of the Sloop projects. The catalogue
++The FM-1 and the ESP32 run the same protocol version, or the ESP32 a newer one, read as far as
++this version's fields go. Sound changes are made live, without reflashing. The ESP32 keeps each
++firmware's sound in its own flash; it is not part of the Sloop projects. The catalogue
 +(engines, presets and parameters) comes from the ESP32; Sloop does not port the deep editors of
 +the synthesizers.
 +
 +Implementation: `cartridge.c`, `cartridge_wire.h`, `ui_cartridge.c`. Catalogue and formatting on
 +the ESP32, without duplicating tables on the FM-1. Bounded requests/replies, revision and
-+sequence, idempotent retries, discarding of stale ACKs and a timeout. The full names appear on
-+four rows, one per knob.
++sequence, idempotent retries, discarding of stale ACKs and a timeout; with the page hidden, probes
++when USB comes up and after every reply, and a liveness query every 5 s once the cartridge has
++answered. Opening the page and leaving it each send a query (the second moves the ESP32's cursor
++off FIRMWARE, cancelling a switch it armed). The full names appear on four rows, one per knob.
 +
 +Validation: `tests/run_cartridge_tests.sh` includes `cartridge_ui_test.c`, natively and with
 +ASan/UBSan. The FM1 Cartridge project also runs this client against the real ESP32 server and DSP
@@ -196,10 +218,10 @@ index 0000000..8526371
 +physical validation of the cartridge. Build figures in [CARTRIDGE_BUILD.md](CARTRIDGE_BUILD.md).
 diff --git a/docs/CARTRIDGE_USB_RETURN.md b/docs/CARTRIDGE_USB_RETURN.md
 new file mode 100644
-index 0000000..c0c0f04
+index 0000000..702f80b
 --- /dev/null
 +++ b/docs/CARTRIDGE_USB_RETURN.md
-@@ -0,0 +1,163 @@
+@@ -0,0 +1,191 @@
 +# Cartridge USB return
 +
 +This tree is Sloop 2.7.1 (`https://github.com/isod89/sloop-fm1.git`, revision
@@ -234,15 +256,18 @@ index 0000000..c0c0f04
 +
 +1. In the menu opened by HOME, use SELECT to reach the **USB** section.
 +2. **KNOB 1 / USB RETURN** sets the gain from OFF to 100%.
-+3. **OCT+** toggles between mute and 100%. The state is RAM-only: restarting restores 100%.
-+4. **KNOB 2 / CHARGE** selects **AUTO** or **ON** for the FM-1's internal charger while the
-+   cartridge is the host (section below). Also RAM-only.
++3. **OCT+** mutes, and pressed again brings back the level it had. The state is RAM-only:
++   restarting restores 100%.
++4. **KNOB 2 / CHARGE** selects **ON** (the default) or **AUTO** for the FM-1's internal charger
++   while the cartridge is the host (section below). Also RAM-only.
 +5. The master, limiter and global effects stay in the audio path.
 +
 +The return is a single stereo signal, summed once on core 0 after the sum of the cores and
 +before the global effects and limiter. It does not create a fifth track, does not change the
 +saved project format and does not feed the per-track chorus/delay/reverb sends. Mute keeps
-+consuming the packets, so no stale audio builds up while muted.
++consuming the packets, so no stale audio builds up while muted. Every start and re-prime fades in
++over eight blocks (5.8 ms, `UAR_RAMP`), and the gain glides from one block's value to the next
++sample by sample, so USB RETURN, a mute or the cartridge track's LEVEL never steps.
 +
 +The track on the cartridge's MIDI channel is the cartridge track (`cartridge.c`
 +`cart_tracks_update`, `core.h` `CART_TRACK`): the notes its engine would play go out over MIDI on
@@ -250,9 +275,17 @@ index 0000000..c0c0f04
 +takes, with OUT at KEYS; its engine renders nothing and is left out of the mix (`fx.c`); the
 +footer, TRACKS, the studio view and the PRESETS page show the cartridge's engine and preset; and
 +PRESETS steps through the cartridge's presets (`cart_browse`). The handover happens at the start
-+of an audio block (`seq.c` `cart_tracks_block`): voices stop when the cartridge takes the track,
-+and the notes sent are ended when it gives it back or the track is muted. The cartridge's
-+polyphony depends on the firmware it runs. Sloop's knobs do not send CC.
++of an audio block (`seq.c` `cart_tracks_block`): voices stop and an All Notes Off goes out on the
++track's channel when the cartridge takes the track (its keys' plain notes may be sounding there),
++and the notes sent are ended when it gives it back or the track is muted. A note-off dropped by a
++full MIDI OUT ring (`usb.c` `midi_out_event`) is followed by an All Notes Off on its channel once
++there is room. The same block sets the return's level from the cartridge track's LEVEL (its default
++is unity) and MUTE, and feeds the track's meter with the return's peak. The cartridge's polyphony
++depends on the firmware it runs. Sloop's knobs do not send CC. While the cartridge answers, CLOCK
++OUT runs even at OFF (`seq.c` `clkout_block`), unless SYNC follows an external clock.
++`cart_quiet` holds the autosave and the section saves, whose flash erase runs with the interrupts
++off, while a cartridge track holds a note and for a second after the return last went above
++-54 dBFS (`uar_loud_ms`).
 +
 +### CARTRIDGE page
 +
@@ -264,14 +297,16 @@ index 0000000..c0c0f04
 +parameter list, **FIRMWARE** (knob 3), lists the slots in the ESP32 flash; knob 4 picks one
 +("2/3" on the right, CURRENT on the running one) and the cartridge reboots into it two
 +seconds after the knob stops. The footer explains this while FIRMWARE is selected. Without an
-+answer the header shows NO LINK. The protocol is described in the cartridge
-+project's `docs/CARTRIDGE.md`.
++answer the header shows NO LINK, and with an answer but the stream at alt 0, "<NAME> NO AUDIO".
++The knobs go through Sloop's knob acceleration (`ui_input.c` `accel`); a value given by name never
++accelerates. On HOME, the cartridge track's footer reads CARTRIDGE. The protocol is described in
++the cartridge project's `docs/CARTRIDGE.md`.
 +
 +## FM-1 charger and the charging icon
 +
 +The charging icon in the Sloop header is animation only: `ui_draw.c` fills the bars whenever a
-+configured, non-suspended USB host is present, and never reads the charger state. It does not
-+show that the FM-1 battery is charging.
++configured, non-suspended USB host is present, and never reads the charger state. With the
++cartridge answering it shows the battery's level instead: the cartridge powers nothing.
 +
 +The FM-1 SoC (AC79/WL82) has an internal Li-ion charger controlled by the P33 register
 +`P3_CHG_CON0` (bit 0 `CHARGE_EN`, bit 1 `CHGBG_EN`; SDK
@@ -283,24 +318,27 @@ index 0000000..c0c0f04
 +  bit 0, using P33's own OR/AND operations (no read-modify-write); the bandgap and the
 +  voltage/current selections stay as the boot left them. Register access stays inside `hal/`.
 +- At startup, before interrupts are enabled, `cart_charge_boot()` (`cartridge.c`) reads the
-+  state the boot left the charger in. Sloop otherwise never touches this bit; it is set by the
-+  ROM, uboot or the hardware default, and its value is only known on the device.
-+- Menu **HOME → USB → KNOB 2 / CHARGE**: **AUTO** (default) holds `CHARGE_EN` at zero while
-+  `cart.online` (the ESP32 answers the cartridge protocol); **ON** leaves the charger as it was
-+  at boot. RAM-only: restarting returns to AUTO. Below the value, **NOW OFF** means the firmware
-+  is holding the charger off; **BOOT OFF** means the SoC started with the charger already off,
-+  in which case AUTO writes nothing.
++  state the boot left the charger in: whatever the ROM, uboot, the hardware default or a
++  power-off that kept the P33 domain left, known only on the device.
++- Menu **HOME → USB → KNOB 2 / CHARGE**: **ON** (default) keeps the charger on, so the first
++  main-loop pass of every start sets `CHARGE_EN` when the boot found it off, with or without a
++  cartridge; **AUTO** holds `CHARGE_EN` at zero while `cart.online` (the ESP32 answers the
++  cartridge protocol). RAM-only: restarting returns to ON. Below the value, **NOW OFF** means the
++  firmware is holding the charger off. Sloop writes the bit in these cases only: ON at start,
++  AUTO while linked, and the restores listed below.
 +- The charger returns to its boot state when the link drops (protocol timeout, suspend,
 +  deconfiguration or USB reset), when CHARGE changes to ON, and before entering UBOOT, the OTA
 +  update and the restart after FELUCCA CRASH.
 +- `P3_CHG_CON0` survives a software reset. The boot state and the "turned off by us" flag live
 +  in `.noinit` RAM (`cart_keep`): after a watchdog reset or a lockup with the link active, the
-+  next startup turns the charger back on and keeps the true boot state. At power-on the RAM is
-+  random and the record is ignored (magic).
++  next startup turns the charger back on (`main.c fm1_cstart`, before the boot-loop guard sends it
++  to the rescue or to UBOOT) and keeps the true boot state. At power-on the RAM is random and the
++  record is ignored (magic).
 +- So that AUTO acts without a visit to the CARTRIDGE page, every USB configuration sends up to 4
-+  discovery queries with the page hidden (each with up to 3 attempts; about 5 s in total).
-+  Without an answer (a computer, for example) the page stays quiet until it is opened.
-+  Connected and idle, there is no periodic traffic.
++  discovery queries with the page hidden (each with up to 3 attempts; about 5 s in total), and
++  every accepted reply gives a later outage 4 more. Without an answer (a computer, for example)
++  the page stays quiet until it is opened. Once the cartridge has answered in this USB session,
++  a query every 5 s with the page hidden checks the link and finds it again after an outage.
 +
 +Risks and limits: this control has not been tested on the SoC. The bit map comes only from the
 +SDK header; the real effect of clearing `CHARGE_EN` (charge current, VBUS detector behaviour,
@@ -309,11 +347,12 @@ index 0000000..c0c0f04
 +the cartridge project): with no VBUS from the cartridge there is nothing to turn off; with
 +VBUS, the firmware shutoff does not replace an electrical review, because there may be current
 +paths this bit does not control. If the FM-1 power switch cuts the P33 domain, the state returns
-+to the hardware default; if it is a soft power-off, an FM-1 switched off with the cartridge
-+connected may keep the charger off until the next Sloop startup. Recovery mode and entering
-+UBOOT directly from boot do not restore it; the next normal startup does. The native tests
-+(`tests/cartridge_ui_test.c`) exercise the sequence with a simulated HAL: online → off, link
-+lost/reset → restored, ON/AUTO menu, restore before reset and recovery after an unclean reset.
++to the hardware default; if it is a soft power-off that also loses `.noinit`, an FM-1 switched off
++with the cartridge connected at AUTO keeps the charger off while it stays off, and the next start
++turns it back on (CHARGE starts at ON). The native tests (`tests/cartridge_ui_test.c`) exercise
++the sequence with a simulated HAL: the ON default turning a charger found off back on, AUTO
++online → off, link lost/reset → restored, ON/AUTO menu, restore before reset, and recovery after
++an unclean reset.
 +
 +## Reception and clocks
 +
@@ -325,14 +364,25 @@ index 0000000..c0c0f04
 +The ASRC uses 4-point Hermite interpolation (Catmull-Rom), a Q24 phase and occupancy-based PI
 +correction, limited to ±5,000 ppm. Linear interpolation would let the fraction, which sweeps
 +slowly from 0 to 1 at the beat rate of the two clocks, modulate the treble by up to 2.4 dB at
-+10 kHz (a slow tremolo on bright sounds); with Hermite the modulation stays below 0.5 dB. The
-+products are 64-bit, with no overflow on full-scale steps.
++10 kHz (a slow tremolo on bright sounds); with Hermite it is 0.5 dB at 9 kHz, 0.7 dB at 10 kHz and
++3.5 dB at 15 kHz (computed for the interpolator, not measured). The products are 64-bit, with no
++overflow on full-scale steps.
 +
-+The occupancy target is 384 frames, measured per block of 32; since the DAC consumes 256 frames
++The occupancy target is a mean of 384 frames over a burst; since the DAC consumes 256 frames
 +per burst, the minimum after a burst stays near 5 ms, so a late packet from the host does not
-+become an underrun. Startup waits for 512 frames. These values are neither a latency
-+measurement nor a certification of musical quality; the resampler's cost and quality on the
-+device have yet to be measured.
++become an underrun. The rate loop reads the occupancy once per burst, as the burst begins
++(`audio.c` calls `uac_rx_burst()` at the audio interrupt's entry, and the burst's first block
++reads it), where it aims at 496 frames, the start of a sawtooth whose mean is 384: there the
++reading is what came in over a whole DAC period, independent of the render's own length, since
++TIMER5 pushes packets inside the render. A start waits for 512 frames counted the same way, on a
++burst's first block, and then skips to the aim. The rate learned (a slow mean of the correction)
++survives a re-prime and an underrun, so a restart does not glide back to it. The closed-loop
++model in `tests/uac_rx_test.c` (bursts rendered in 10 % to 80 % of their period, the host's packets
++at any phase against them) starts every stream on a burst's first block, at the aim, with a pitch
++excursion of at most 0.95 cent; with the render time varying from 0.8 to 3.8 ms burst to burst,
++the start's excursion is 0.26 cent and the steady wobble 0.15 cent peak to peak. These values come
++from a model: they are neither a latency measurement nor a certification of musical quality, and
++the resampler's cost and quality on the device have yet to be measured.
 +
 +Alt 0, reset, deconfiguration, suspend, an invalid packet, an overflow and the absence of packets
 +for 20 ms discard the pending audio or restart acquisition. A lost ISO packet (OverRun in the
@@ -364,7 +414,7 @@ index 0000000..c0c0f04
 +   active, NOW OFF) and at ON, and check the charger's boot state in the menu before relying on
 +   the firmware shutoff.
 diff --git a/firmware/hal/fm1_sys.h b/firmware/hal/fm1_sys.h
-index fbc1f6a..8a4cb5c 100644
+index fbc1f6a..3682db5 100644
 --- a/firmware/hal/fm1_sys.h
 +++ b/firmware/hal/fm1_sys.h
 @@ -6,6 +6,7 @@
@@ -375,7 +425,7 @@ index fbc1f6a..8a4cb5c 100644
   *   fm1_reboot()         chip reset through P33 (P3_PR_PWR bit 4)
   *   fm1_enter_uboot()    "usb_update_mode" at 0x01C7FD80 + chip reset
   *   fm1_enter_update(p)  112-byte UPDATA_PARM record at 0x01C7FD88 + core reset
-@@ -117,6 +118,24 @@ static void fm1_wdt_arm(uint8_t t)
+@@ -117,6 +118,25 @@ static void fm1_wdt_arm(uint8_t t)
  static void fm1_wdt_feed(void) { fm1_p33_or(FM1_P3_WDT_CON, 0x40); }
  static void fm1_wdt_stop(void) { fm1_p33_write(FM1_P3_WDT_CON, 0); }
  
@@ -385,8 +435,9 @@ index fbc1f6a..8a4cb5c 100644
 + * touched, with the P33 OR / AND operations (no read-modify-write): the bandgap and the voltage / current selections
 + * stay as the boot left them, and the charger comes back exactly as it was. The register lives in the P33 domain and
 + * keeps its value over a soft reset (as P3_WDT_CON does): whoever clears it puts it back before a reset
-+ * (cartridge.c keeps the boot state in .noinit for a crash or watchdog reset). SLOOP never set these bits before:
-+ * the bit's value at boot is whatever the ROM / uboot / hardware default left. Untested on the SoC so far */
++ * (cartridge.c keeps the boot state in .noinit for a crash or watchdog reset). The bit's value at boot is whatever
++ * the ROM / uboot / hardware default left, or a power-off that kept P33 while CHARGE AUTO held it off; the cartridge
++ * build sets it at start when it finds it off (CHARGE starts at ON). Untested on the SoC so far */
 +#define FM1_P3_CHG_CON0 0x1Au
 +static uint32_t fm1_charge_en(void) { return fm1_p33_read(FM1_P3_CHG_CON0) & 1u; }
 +static void fm1_charge_set(uint32_t en)
@@ -418,12 +469,26 @@ index 392c768..aba7f43 100644
  FM1_INLINE void fm1_usb_ep4_txbuf(void *p) { FM1_USB_EP4_TADR = (uint32_t)(uintptr_t)p; }
  FM1_INLINE void fm1_usb_ep4_send(void *p, uint32_t n)
  {
+diff --git a/firmware/src/audio.c b/firmware/src/audio.c
+index d0c3286..5417f01 100644
+--- a/firmware/src/audio.c
++++ b/firmware/src/audio.c
+@@ -66,6 +66,9 @@ void fm1_alnk0_irq(void)                       /* via isr_alnk0 (hal/fm1_isr.S)
+ #if FELUCCA_UAC
+         uac_render_start();
+         usb_full_now = (uint8_t)(usb_full && uac.feed);  /* menu USB AUDIO = FULL, while the computer records */
++#endif
++#if FELUCCA_UAC_RX
++        uac_rx_burst();                                 /* the USB return's rate loop reads its occupancy now */
+ #endif
+         for (b = 0; b < HALF_FRAMES; b += CTL)
+             audio_block(o + 2u * b, CTL);
 diff --git a/firmware/src/cartridge.c b/firmware/src/cartridge.c
 new file mode 100644
-index 0000000..581eb16
+index 0000000..c5773d1
 --- /dev/null
 +++ b/firmware/src/cartridge.c
-@@ -0,0 +1,213 @@
+@@ -0,0 +1,241 @@
 +/* SPDX-License-Identifier: GPL-3.0-only */
 +/* Main-loop client of the cartridge. Its metadata stays on the ESP32.
 + * One request at a time; bounded retries replay identical sequence/revision.
@@ -441,6 +506,7 @@ index 0000000..581eb16
 +    int16_t delta[4];
 +    uint8_t online, waiting, retries, dirty, active, refresh;
 +    uint8_t up, probe;              /* USB configured since the last drop; hidden-page probes left (CART_PROBES) */
++    uint8_t seen;                   /* the cartridge answered in this USB session: a 5 s liveness query, page hidden */
 +    uint8_t to_last;                /* PRESETS stepped back into the previous engine: its last preset once it has loaded */
 +    uint32_t sent_ms, seen_ms, resets;
 +#if FELUCCA_CARTRIDGE_DIAG
@@ -457,14 +523,15 @@ index 0000000..581eb16
 +
 +/* The FM-1's own charger (fm1_sys.h fm1_charge_*) while the cartridge is the USB host: the ESP32's small cell
 + * must not charge the FM-1's battery. CHARGE (menu HOME -> USB, RAM only) AUTO holds CHARGE_EN off while
-+ * cart.online, ON leaves the charger as the boot found it. P3_CHG_CON0 survives a soft reset, so the state as
++ * cart.online, ON (the default) leaves the charger as the boot found it, and turns it back on when the boot found
++ * it off (a power-off that kept P33 while AUTO held it, with .noinit lost). P3_CHG_CON0 survives a soft reset, so the state as
 + * the boot found it and "we hold it off" live in .noinit: a crash or watchdog reset with the link up still
 + * learns the true boot state at the next start and puts the charger back. Not static, as felucca_dbg: a
 + * file-local .noinit object would let the compiler fold the magic check away. Power-on: RAM random, magic off.
 + * The icon in the header is animation whenever a USB host is configured (ui_draw.c): it never read this bit. */
 +#define CART_KEEP_MAGIC 0x43484731u                       /* "CHG1" */
 +struct cart_keep { uint32_t magic; uint8_t boot_en, off; } cart_keep __attribute__((section(".noinit")));
-+static uint8_t cart_charge_on;                            /* menu CHARGE: 0 AUTO (the default), 1 ON */
++static uint8_t cart_charge_on = 1;                        /* menu CHARGE: 0 AUTO, 1 ON (the default) */
 +static uint32_t cart_charge_writes;                       /* diagnostic: P33 writes this boot */
 +
 +static void cart_charge_boot(void)                        /* fm1_main, before the interrupts are enabled */
@@ -477,6 +544,11 @@ index 0000000..581eb16
 +static void cart_charge_apply(void)                       /* main loop: after every link / menu change */
 +{
 +    uint32_t want = cart_charge_on || !cart.online;      /* 1: as the boot left it */
++    if (cart_charge_on && !cart_keep.boot_en && !fm1_charge_en()) {   /* found off at start, ON: the charger back */
++        fm1_charge_set(1);
++        cart_keep.boot_en = 1;
++        cart_charge_writes++;
++    }
 +    if (!cart_keep.boot_en || want == (uint32_t)!cart_keep.off) return;
 +    fm1_irq_off();
 +    fm1_charge_set(want);
@@ -490,15 +562,15 @@ index 0000000..581eb16
 +    fm1_irq_off();
 +    if (cart_keep.off) { fm1_charge_set(1); cart_keep.off = 0; cart_charge_writes++; }
 +}
-+static const char *cart_charge_hint(void)                 /* under the menu row: held off now / booted with it off */
++static const char *cart_charge_hint(void)                 /* under the menu row: AUTO holds it off now */
 +{
-+    return cart_keep.off ? "NOW OFF" : cart_keep.boot_en ? "" : "BOOT OFF";
++    return cart_keep.off ? "NOW OFF" : "";
 +}
 +static void cart_turn(uint32_t knob, int32_t steps)
 +{
 +    uint32_t i, op = knob + 1u;
 +    if (knob >= 4u || !cart.online || cart.refresh ||
-+        (cart.waiting && cart.q[CART_OP] == CART_QUERY)) return;
++        (cart.waiting && cart.q[CART_OP] == CART_QUERY && cart.active)) return;   /* (the page's names, its cursor) */
 +    /* Don't edit a value for a parameter/sound whose name hasn't arrived yet.
 +     * Repeated turns of the same knob accumulate while its ACK is in flight. */
 +    if (cart.waiting && cart.q[CART_OP] && cart.q[CART_OP] < op) return;
@@ -536,6 +608,12 @@ index 0000000..581eb16
 +    int32_t npre = (int32_t)cart_u14(cart.view + CART_NPRE), eng = cart.view[CART_ENG], neng = cart.view[CART_NENG];
 +    if (!cart.online || !s)
 +        return;
++    /* crossing into another engine (ENGINE out, then PRESET to its end): a turn waits for it to land, else it
++     * counts from the engine being left (a whole engine skipped, or ENGINE back and forth) */
++    if (cart.delta[0] || cart.to_last || cart.delta[1] == 8191 ||
++        (cart.waiting && (cart.q[CART_OP] == CART_ENGINE ||
++                          (cart.q[CART_OP] == CART_PRESET && cart_s14(cart.q + CART_ARG) == 8191))))
++        return;
 +    if (cart.waiting && cart.q[CART_OP] == CART_PRESET)
 +        pre += cart_s14(cart.q + CART_ARG);
 +    if (pre + s >= npre && eng + 1 < neng) {
@@ -552,13 +630,15 @@ index 0000000..581eb16
 +{
 +    const uint8_t *p;
 +    uint32_t n, k;
-+    if (active && !cart.active) {
++    if ((active != 0) != cart.active) {        /* the page opens (its names afresh) or is left (the query moves the
++                                                * cartridge's cursor off FIRMWARE: a switch it armed is cancelled) */
 +        cart.refresh = 1;
++        if (cart.delta[0]) cart.to_last = 0;    /* (a crossing not sent goes with the turns) */
 +        memset(cart.delta, 0, sizeof cart.delta);
 +    }
 +    cart.active = active != 0;
 +    if (!usb.config || usb.suspended || cart.resets != usb.resets) {
-+        cart_offline(); cart.resets = usb.resets; cart.up = 0;
++        cart_offline(); cart.resets = usb.resets; cart.up = cart.seen = 0;
 +        cart.sent_ms = fm1_ms - 600u;
 +        if (!usb.config || usb.suspended) return;
 +    }
@@ -569,8 +649,8 @@ index 0000000..581eb16
 +    if (ota_frame_get(&p, &n) && n >= 3u && p[0] == 0x7d && p[1] == 'C' && p[2] == 'F') {
 +        uint8_t v[CART_REPLY_SIZE];
 +        v[0] = 0xf0; v[CART_REPLY_SIZE - 1] = 0xf7;
-+        if (n == CART_REPLY_SIZE - 2u) {
-+            memcpy(v + 1, p, n);
++        if (n >= CART_REPLY_SIZE - 2u) {                /* (a newer cartridge's may be longer: read as far as ours) */
++            memcpy(v + 1, p, CART_REPLY_SIZE - 2u);
 +            if (cart.waiting && cart_valid(v, sizeof v) && v[CART_OP] == CART_REPLY &&
 +                cart_u14(v + CART_SEQ) == cart_u14(cart.q + CART_SEQ) && v[CART_STATUS] <= CART_BAD_REQUEST &&
 +                v[CART_NENG] && v[CART_ENG] < v[CART_NENG] &&
@@ -587,8 +667,14 @@ index 0000000..581eb16
 +                if (!cart.online || memcmp(cart.view + CART_ENG, v + CART_ENG,
 +                                           CART_REPLY_SIZE - 1u - CART_ENG)) cart.dirty = 1;
 +                memcpy(cart.view, v, sizeof v);
-+                cart.online = 1; cart.waiting = cart.refresh = 0; cart.seen_ms = fm1_ms;
-+                if (v[CART_STATUS]) memset(cart.delta, 0, sizeof cart.delta);
++                cart.online = cart.seen = 1; cart.waiting = 0; cart.seen_ms = fm1_ms;
++                if (cart.q[CART_OP] == CART_QUERY) cart.refresh = 0;     /* (a page left during a knob's request:
++                                                                          * its query still goes out) */
++                cart.probe = CART_PROBES;                                /* a fresh budget for the next outage */
++                if (v[CART_STATUS]) {
++                    if (cart.delta[0]) cart.to_last = 0;
++                    memset(cart.delta, 0, sizeof cart.delta);
++                }
 +                if (cart.to_last && cart.q[CART_OP] == CART_ENGINE) {   /* (cart_browse) the previous engine is in */
 +                    cart.to_last = 0;
 +                    if (!v[CART_STATUS])
@@ -607,12 +693,14 @@ index 0000000..581eb16
 +        if (cart.online && !cart.refresh) for (k = 0; k < 4u; ++k) if (cart.delta[k]) {
 +            op = (uint8_t)(k + 1u); delta = cart.delta[k]; break;
 +        }
-+        /* Every knob ACK already contains the complete state. While connected,
-+         * query only on page entry, avoiding unnecessary control traffic.
-+         * Offline discovery keeps its bounded 500 ms retry. */
-+        if (!op && ((!active && !cart.probe) || (cart.online && !cart.refresh) ||
++        /* Every knob ACK already contains the complete state. While connected, query on page entry, and every
++         * 5 s with the page hidden (liveness: a dead link gives the track back to Sloop's sound, a live one
++         * comes back). Offline discovery keeps its bounded 500 ms retry; once answered in this session, a
++         * query every 5 s after the probes run out. A computer host never answers: it sees the probes only. */
++        if (!op && ((!active && !cart.probe && !(cart.seen && fm1_ms - cart.sent_ms >= 5000u)) ||
++                    (cart.online && !cart.refresh && (active || fm1_ms - cart.sent_ms < 5000u)) ||
 +                    (!cart.refresh && fm1_ms - cart.sent_ms < 500u))) return;
-+        if (!op && !active) cart.probe--;
++        if (!op && !active && cart.probe) cart.probe--;
 +        if (SXQ - (so_w - so_r) < (CART_REQUEST_SIZE + 2u) / 3u) return;
 +        cart_header(cart.q, ++cart.seq, op, cart_u14(cart.view + CART_REV));
 +        cart_put14(cart.q + CART_ARG, delta + 8192);
@@ -633,27 +721,35 @@ index 0000000..581eb16
 +}
 +static void cart_service(int active)
 +{
++    static uint8_t streaming;
 +    cart_service_link(active);
++    if (streaming != (uint8_t)uar.active) {         /* the header's OK / NO AUDIO follows the stream */
++        streaming = (uint8_t)uar.active;
++        cart.dirty = 1;
++    }
 +    cart_tracks_update();
 +    cart_charge_apply();
 +}
 diff --git a/firmware/src/cartridge_wire.h b/firmware/src/cartridge_wire.h
 new file mode 100644
-index 0000000..b2a5b60
+index 0000000..93c79df
 --- /dev/null
 +++ b/firmware/src/cartridge_wire.h
-@@ -0,0 +1,39 @@
+@@ -0,0 +1,52 @@
 +/* SPDX-License-Identifier: GPL-3.0-only */
 +/* Cartridge protocol, version 3 (byte 4 of every frame). Shared verbatim between the
 + * ESP32 firmware (core/include/fm1) and Sloop (firmware/src); all payload bytes are MIDI 7-bit.
 + * Preset index and count are 14-bit; the reply also names the running firmware and its slot
 + * (CART_FW_NAME, CART_SLOT, CART_NSLOT) and the MIDI channel the synthesizer answers
 + * (CART_MIDI_CH: 0 OMNI, 1..16), which tells Sloop which track the cartridge plays.
-+ * A peer with another version is ignored. */
++ * A later version only appends fields before the F7: a frame with a newer version byte, and as
++ * long or longer, is read as far as this version's fields go (cart_request_of; Sloop's reply
++ * check). A peer with an older version is ignored. */
 +#ifndef FM1_CARTRIDGE_WIRE_H
 +#define FM1_CARTRIDGE_WIRE_H
 +#include <stdint.h>
 +#include <stddef.h>
++#define CART_VERSION 3u
 +#define CART_REQUEST_SIZE 13u
 +#define CART_REPLY_SIZE 123u
 +#define CART_USB_SIZE 164u
@@ -670,15 +766,25 @@ index 0000000..b2a5b60
 +static inline void cart_put14(uint8_t *p, uint16_t v) { p[0] = v & 127u; p[1] = (v >> 7) & 127u; }
 +static inline void cart_header(uint8_t *p, uint16_t seq, uint8_t op, uint16_t rev)
 +{
-+    p[0] = 0xf0; p[1] = 0x7d; p[2] = 'C'; p[3] = 'F'; p[4] = 3;
++    p[0] = 0xf0; p[1] = 0x7d; p[2] = 'C'; p[3] = 'F'; p[4] = CART_VERSION;
 +    cart_put14(p + CART_SEQ, seq); p[CART_OP] = op; cart_put14(p + CART_REV, rev);
 +}
 +static inline int cart_valid(const uint8_t *p, size_t n)
 +{
 +    size_t i;
 +    if (!p || n < CART_REQUEST_SIZE || p[0] != 0xf0 || p[1] != 0x7d ||
-+        p[2] != 'C' || p[3] != 'F' || p[4] != 3 || p[n - 1] != 0xf7) return 0;
++        p[2] != 'C' || p[3] != 'F' || p[4] < CART_VERSION || p[n - 1] != 0xf7) return 0;
 +    for (i = 1; i + 1 < n; ++i) if (p[i] & 0x80) return 0;
++    return 1;
++}
++/* A request as this version reads it: the first CART_REQUEST_SIZE - 1 bytes of a valid frame (a newer
++ * peer's may be longer) and its F7. 0 when frame is not a valid request. */
++static inline int cart_request_of(const uint8_t *frame, size_t n, uint8_t q[CART_REQUEST_SIZE])
++{
++    size_t i;
++    if (!cart_valid(frame, n) || frame[CART_OP] >= CART_REPLY) return 0;
++    for (i = 0; i + 1 < CART_REQUEST_SIZE; ++i) q[i] = frame[i];
++    q[CART_REQUEST_SIZE - 1] = 0xf7;
 +    return 1;
 +}
 +#endif
@@ -702,6 +808,37 @@ index 5b6e21a..ae91a50 100644
  /* silent: MUTE, or another track is soloed */
  static int trk_silent(const track_t *t)
  {
+diff --git a/firmware/src/editor.c b/firmware/src/editor.c
+index 8c70a41..3931624 100644
+--- a/firmware/src/editor.c
++++ b/firmware/src/editor.c
+@@ -807,7 +807,7 @@ UI_SMALL static void ed_handle(const uint8_t *f, uint32_t n)   /* f: the bytes b
+         uint32_t rc;
+         if (na < 1u || a[0] >= SMP_USER_SLOTS || !flash_ok)
+             return;
+-        rc = ed_smp_erase(a[0], cmd == ED_SMP_ERASE) ? 1u : 0u;
++        rc = ed_flash_busy() ? 3u : ed_smp_erase(a[0], cmd == ED_SMP_ERASE) ? 1u : 0u;
+         ed_smp_open[a[0]] = (uint8_t)(cmd == ED_SMP_BEGIN && !rc);
+         ed_b(a[0]);
+         ed_b(rc);
+@@ -821,6 +821,8 @@ UI_SMALL static void ed_handle(const uint8_t *f, uint32_t n)   /* f: the bytes b
+         len = ed_unpack7(a + 4, na - 4u, ed_smp_buf, 256u);
+         if (off < SMP_USER_DATA || (off & 0xFFu) || !len || off + len > SMP_USER_SIZE)
+             rc = 1;
++        else if (ed_flash_busy())
++            rc = 5;                                        /* the song plays: an erase would cut the audio */
+         else if (usr_nz[a[0]] || !ed_smp_open[a[0]])
+             rc = 4;                                        /* slot in use: SMP_BEGIN first (voices read it) */
+         else {
+@@ -840,7 +842,7 @@ UI_SMALL static void ed_handle(const uint8_t *f, uint32_t n)   /* f: the bytes b
+         if (na < 2u || a[0] >= SMP_USER_SLOTS || !flash_ok)
+             return;
+         ed_b(a[0]);
+-        ed_b((uint32_t)ed_smp_end(a[0], a + 1, na - 1u));
++        ed_b(ed_flash_busy() ? 7u : (uint32_t)ed_smp_end(a[0], a + 1, na - 1u));
+         break;
+     case ED_SMP_INFO:                                      /* -> per slot: zones (0 = empty), name, data KiB */
+         ed_b(SMP_USER_SLOTS);
 diff --git a/firmware/src/felucca.c b/firmware/src/felucca.c
 index 9b0d354..34df6f1 100644
 --- a/firmware/src/felucca.c
@@ -763,7 +900,7 @@ index db69782..9c91c95 100644
                                                           * (what it adds does not depend on them: the same sum) */
      punch_freeze_feed(acc[0].sr, mix_l, mix_r, n);     /* punch-in FREEZE: the whole dry mix into the held reverb */
 diff --git a/firmware/src/main.c b/firmware/src/main.c
-index fe3de9a..844ca39 100644
+index fe3de9a..78ee055 100644
 --- a/firmware/src/main.c
 +++ b/firmware/src/main.c
 @@ -62,8 +62,8 @@ UI_SMALL static uint32_t stack_sp(void) { return fm1_sp(); }
@@ -845,6 +982,19 @@ index fe3de9a..844ca39 100644
              ed_service();                       /* editor replies without waiting for the next frame */
  #endif
          }
+@@ -376,6 +398,12 @@ UI_SMALL void fm1_cstart(void)
+     if ((p3 & 1u) && !(p3 & (4u | 0x40u)))
+         bootguard_clear(&bootguard);           /* a power-on (not a watchdog or soft reset): no failed boot to count */
+     boot_mode = bootguard_begin(&bootguard);
++#if FELUCCA_CARTRIDGE
++    if (cart_keep.magic == CART_KEEP_MAGIC && cart_keep.off) {
++        fm1_charge_set(1);                      /* before the rescue, the updater or SLOOP: the charger as before the */
++        cart_keep.off = 0;                      /* cartridge held it off (cartridge.c), not off until a P33 reset */
++    }
++#endif
+     if (boot_mode == BOOT_ROM) {
+         fm1_enter_uboot();
+     }
 diff --git a/firmware/src/params.c b/firmware/src/params.c
 index b2bbe27..5cac60b 100644
 --- a/firmware/src/params.c
@@ -877,8 +1027,26 @@ index b2bbe27..5cac60b 100644
          return pg->graph != GR_BROWSE && pg->graph != GR_USER;
      return pg->scope != SC_ENGINE && (pg->scope != SC_TRACK || pg->fam == FAM_SEQ || pg->graph == GR_SLCR ||
                                        pg->graph == GR_INS);
+diff --git a/firmware/src/project.c b/firmware/src/project.c
+index 9d4551e..d434c4f 100644
+--- a/firmware/src/project.c
++++ b/firmware/src/project.c
+@@ -686,6 +686,13 @@ UI_SMALL static int audio_quiet(void)
+     for (i = 0; i < NDRUM; i++)
+         if (drums.v[i].active)
+             return 0;
++#if FELUCCA_CARTRIDGE
++    if (!cart_quiet())                              /* the cartridge sounds (seq.c) */
++        return 0;
++#elif FELUCCA_UAC_RX
++    if (fm1_ms - uar_loud_ms < 1000u)               /* the USB return: a computer playing */
++        return 0;
++#endif
+     return 1;
+ }
+ 
 diff --git a/firmware/src/seq.c b/firmware/src/seq.c
-index c04fb84..dae97a5 100644
+index c04fb84..fde6add 100644
 --- a/firmware/src/seq.c
 +++ b/firmware/src/seq.c
 @@ -107,6 +107,8 @@ static uint8_t mo_any;                     /* something was sent on since the la
@@ -890,7 +1058,7 @@ index c04fb84..dae97a5 100644
      if (!song.g[G_MIDI] || note > 127u)
          return;
      seq_out_off(t, note);                      /* played again while on: off first */
-@@ -130,6 +132,77 @@ static void seq_out_track_off(const track_t *t)      /* every note of the track
+@@ -130,6 +132,102 @@ static void seq_out_track_off(const track_t *t)      /* every note of the track
                  midi_out_note(mo_ch[i], (w * 32u + b), 0);
              }
  }
@@ -936,13 +1104,36 @@ index c04fb84..dae97a5 100644
 +    ct_set[i][note >> 5] |= bit;
 +    midi_out_note(ct_ch[i], note, vel & 127u);
 +}
++/* nothing sounds on the cartridge (project.c audio_quiet: autosave waits, its flash erase would cut the return): no
++ * note of a cartridge track on, and the USB return quiet for a second (a release tail, notes from elsewhere) */
++static int cart_quiet(void)
++{
++    uint32_t p;
++    for (p = 0; p < NPART; p++)
++        if (ct_set[p][0] | ct_set[p][1] | ct_set[p][2] | ct_set[p][3])
++            return 0;
++    return fm1_ms - uar_loud_ms >= 1000u;
++}
 +/* at a block start (events_block, before any note): a track the cartridge takes falls silent at once (no voice, no
-+ * tail; what MIDI OUT = SEQ had sent for it ends), a track it gives back ends the notes it had sent, and so does a
-+ * cartridge track muted (MUTE, another track soloed), as its own engine would fall silent */
++ * tail; what MIDI OUT = SEQ had sent for it ends, and an All Notes Off on its channel ends the keys' plain notes, which
++ * the cartridge may be playing: held keys, KBD HOLD, as they were before the link came up), a track it gives back ends
++ * the notes it had sent, and so does a cartridge track muted (MUTE, another track soloed), as its own engine would
++ * fall silent */
 +static uint8_t ct_seen;
 +static void cart_tracks_block(void)
 +{
 +    uint32_t now = cart_tracks, k, i, taken = now & ~(uint32_t)ct_seen, given = (uint32_t)ct_seen & ~now;
++    uint32_t q = now ? 0u : 4096u, pk = uar_peak;
++    midi_out_lost_flush();
++    uar_peak = 0;
++    for (k = 0; k < NPART; k++)                         /* the USB return plays at the cartridge track's LEVEL (its */
++        if ((now >> k) & 1u) {                          /* default: unity) and MUTE; its meter shows the return */
++            uint32_t g = trk_silent(&trk[k]) ? 0u
++                       : (uint32_t)LEVEL_Q12[trk[k].p[P_LEVEL] & 127] * 4096u / LEVEL_Q12[TP[P_LEVEL].def];
++            if (g > q) q = g;
++            if ((int32_t)pk > trk[k].peak) trk[k].peak = (int32_t)pk;
++        }
++    uar_track_q12 = q;
 +    for (k = 0; k < NPART; k++)
 +        if (((now >> k) & 1u) && trk_silent(&trk[k]))
 +            cart_notes_off(&trk[k]);
@@ -958,6 +1149,8 @@ index c04fb84..dae97a5 100644
 +            t->xp_n = 0;
 +            t->peak = 0;
 +            seq_out_track_off(t);
++            if (trk_midi_ch(k) <= 15u)
++                midi_out_event(0x0Bu | (0xB0u | trk_midi_ch(k)) << 8 | 123u << 16);
 +        }
 +        if ((given >> k) & 1u)
 +            cart_notes_off(t);
@@ -968,7 +1161,7 @@ index c04fb84..dae97a5 100644
  static void seq_out_all_off(void)
  {
      uint32_t i;
-@@ -1478,7 +1551,7 @@ static void kh_release(track_t *t)                  /* every held note ends */
+@@ -1478,7 +1576,7 @@ static void kh_release(track_t *t)                  /* every held note ends */
                      ft_note_off(n);
                  rec_release(t, n);
                  trk_note_off(t, n);
@@ -977,7 +1170,7 @@ index c04fb84..dae97a5 100644
                      midi_out_note(kh_mc[ti], n, 0);
              }
      memset(kh_set[ti], 0, sizeof kh_set[ti]);
-@@ -1740,7 +1813,8 @@ static void chord_revoice(uint32_t sel)
+@@ -1740,7 +1838,8 @@ static void chord_revoice(uint32_t sel)
                  } else {
                      input_off(t, n);
                  }
@@ -987,7 +1180,7 @@ index c04fb84..dae97a5 100644
              }
          }
          for (j = 0; j < nn; j++) {                  /* the notes it gains */
-@@ -1750,7 +1824,8 @@ static void chord_revoice(uint32_t sel)
+@@ -1750,7 +1849,8 @@ static void chord_revoice(uint32_t sel)
                  in_key = (uint8_t)(k + 1u);         /* (a chord's new note: of this key, #191) */
                  input_on(t, nw[j], 100);
                  in_key = 0;
@@ -997,7 +1190,7 @@ index c04fb84..dae97a5 100644
              }
          }
          memcpy(kb_nt[k], nw, nn);
-@@ -1898,7 +1973,8 @@ static void key_down(uint32_t k)
+@@ -1898,7 +1998,8 @@ static void key_down(uint32_t k)
              in_chord_i = i;
              input_on(t, kb_nt[k][i], 100);
              in_chord = 0;
@@ -1007,7 +1200,7 @@ index c04fb84..dae97a5 100644
          }
          in_key = 0;
          /* the pen of the SEQ layer: the keys down now (a chord), else this note */
-@@ -1947,7 +2023,7 @@ static void key_up(uint32_t k)
+@@ -1947,7 +2048,7 @@ static void key_up(uint32_t k)
              if (kh_on(t) && kh_has(t, n)) {         /* (2.7) KBD HOLD: its MIDI note-off waits with it */
                  kh_mo[kb_trk[k] % NTRK][(n >> 5) & 3u] |= 1u << (n & 31u);
                  kh_mc[kb_trk[k] % NTRK] = (uint8_t)mc;
@@ -1016,7 +1209,61 @@ index c04fb84..dae97a5 100644
                  midi_out_note(mc, n, 0);
              }
          }
-@@ -2824,6 +2900,9 @@ static void clkout_block(uint32_t n)
+@@ -2792,12 +2893,24 @@ static uint32_t mclk_adv(uint32_t n)               /* units to advance this bloc
+  * stopped too (the other gear knows the tempo before PLAY); START as the sequencer starts (after a count-in: when it
+  * starts), with the pulse of its downbeat; STOP when it stops (CLK OUT or SYNC changed while playing: STOP too). Only
+  * while SYNC is INT: a FM-1 that follows a clock never sends one back (no loop through a computer). A pulse goes out
+- * in the block it falls in: < 1 ms late */
++ * in the block it falls in: < 1 ms late. A cartridge: the clock while it answers, CLK OUT or not; one that comes up
++ * (or CLK OUT turned on) while the song plays gets START on the next bar line, so its step 0 is a downbeat */
+ static uint32_t mco_u;                            /* units since the last pulse */
+ static uint8_t mco_play;                          /* the other gear was told START */
++#if FELUCCA_CARTRIDGE
++static uint8_t mco_link;                          /* the cartridge answering, as last seen: one that comes up is told
++                                                   * START (on a bar line, as the song plays: its downbeat ours) */
++#endif
+ static void clkout_block(uint32_t n)
+ {
++    uint32_t adv = n * (uint32_t)song.g[G_BPM], into = 0;
++#if FELUCCA_CARTRIDGE
++    if (mco_link != cart.online)
++        mco_link = cart.online, mco_play = 0;
++    if ((!song.g[G_CLKOUT] && !cart.online) || song.g[G_SYNC]) {   /* (a cartridge answering: its tempo is ours) */
++#else
+     if (!song.g[G_CLKOUT] || song.g[G_SYNC]) {
++#endif
+         if (mco_play)
+             midi_out_event(0x0Fu | 0xFCu << 8);       /* STOP */
+         mco_play = 0;
+@@ -2805,14 +2918,22 @@ static void clkout_block(uint32_t n)
+         return;
+     }
+     if (song.playing && !mco_play) {
+-        midi_out_event(0x0Fu | 0xFAu << 8);           /* START, then the downbeat's pulse */
+-        midi_out_event(0x0Fu | 0xF8u << 8);
+-        mco_u = 0;
++#if FELUCCA_CARTRIDGE
++        into = clk_pos ? BEAT_U - clk_pos : 0u;      /* the next beat line, units into this block (PLAY: 0) */
++        if (into >= adv || (clk_beat + (clk_pos != 0u)) % 4u)
++            into = adv;                               /* (mid-song: START waits for a bar line) */
++#endif
++        if (into < adv) {
++            midi_out_event(0x0Fu | 0xFAu << 8);       /* START, then the downbeat's pulse */
++            midi_out_event(0x0Fu | 0xF8u << 8);
++            mco_u = 0u - into;
++            mco_play = 1;
++        }
+     } else if (!song.playing && mco_play) {
+         midi_out_event(0x0Fu | 0xFCu << 8);           /* STOP */
++        mco_play = 0;
+     }
+-    mco_play = (uint8_t)(song.playing != 0);
+-    mco_u += n * (uint32_t)song.g[G_BPM];
++    mco_u += adv;
+     while (mco_u >= MCLK_PULSE_U) {
+         mco_u -= MCLK_PULSE_U;
+         midi_out_event(0x0Fu | 0xF8u << 8);           /* a pulse */
+@@ -2824,6 +2945,9 @@ static void clkout_block(uint32_t n)
  static void events_block(uint32_t n)
  {
      uint32_t i, pr, adv;
@@ -1026,12 +1273,21 @@ index c04fb84..dae97a5 100644
      if (mo_any && !song.g[G_MIDI]) {            /* MIDI = KEYS again: end what the sequencer had sent */
          seq_out_all_off();
          mo_any = 0;
+@@ -2946,7 +3070,7 @@ static void events_block(uint32_t n)
+         track_t *t = &trk[i];
+         if ((pr >> i) & 1u) {
+             kh_release(t);                            /* (2.7) KBD HOLD: what it held ends */
+-            if (t->pold) {                            /* (2.6) a preset loaded: the notes keep sounding as they are
++            if (t->pold && !CART_TRACK(t)) {          /* (a cartridge track has no voice to fade: its notes end) */                            /* (2.6) a preset loaded: the notes keep sounding as they are
+                                                        * and fade out with the old sound (voice.c sound_change):
+                                                        * no release cut short (an organ's key-off) under the fade */
+                 strum_cancel(t, 0, 1);
 diff --git a/firmware/src/uac_rx.c b/firmware/src/uac_rx.c
 new file mode 100644
-index 0000000..1328f89
+index 0000000..141600d
 --- /dev/null
 +++ b/firmware/src/uac_rx.c
-@@ -0,0 +1,262 @@
+@@ -0,0 +1,324 @@
 +/* SPDX-License-Identifier: GPL-3.0-only
 + * Copyright (C) 2026 Andre Cardoso
 + * Cartridge USB playback: 44.1 kHz, signed 16-bit little-endian stereo.
@@ -1065,10 +1321,23 @@ index 0000000..1328f89
 + * re-prime: 10 ms of silence and a click. Prime above the mean so the first
 + * burst leaves interpolation samples and USB jitter room. */
 +#define UAR_TARGET 384u
++/* The rate loop reads the occupancy once a burst, as the burst begins (audio.c calls uac_rx_burst at the
++ * interrupt's entry; the first block reads it): there it is what came in over a whole DAC period, whatever
++ * the render's own length (TIMER5 pushes packets inside the render, so a reading taken in it follows Sloop's
++ * CPU load and wobbles the pitch). Its aim there is the occupancy whose mean over the burst's eight blocks is
++ * UAR_TARGET; a start begins at it. */
++#define UAR_TARGET_FIRST (UAR_TARGET + 7u * UAR_BLOCK / 2u)
 +#define UAR_PRIME 512u
 +#define UAR_TIMEOUT_MS 20u
 +#define UAR_ONE 16777216u                  /* Q24 input frames per output frame */
 +#define UAR_CORR_MAX 83886                /* +/- 5000 ppm, rounded down */
++/* A start or a re-prime fades in over UAR_RAMP blocks (5.8 ms: the stream comes back without a click; the
++ * dropout before a re-prime is still a cut), and the gain glides sample by sample from one block's value to
++ * the next (no zipper steps when USB RETURN, the track's LEVEL or a mute changes). 0: the gain applies at
++ * once (the exact-value tests). */
++#ifndef UAR_RAMP
++#define UAR_RAMP 8u
++#endif
 +#ifndef UAC_RX_BARRIER
 +#include "../hal/fm1_usb.h"                /* existing HAL ssync + memory clobber */
 +#define UAC_RX_BARRIER() fm1_usb_rx_sync()
@@ -1100,11 +1369,24 @@ index 0000000..1328f89
 +    uint32_t now, last_packet, seen_packet;       /* producer only */
 +    uint32_t packets, malformed, errors, overruns, timeouts;
 +    uint32_t underruns, reprimes, cancelled;      /* consumer only */
++    uint32_t ramp, g_last;                        /* consumer only: blocks into the start ramp, the last gain */
 +    uint32_t epoch, phase, go, hist;              /* consumer only; hist: the frame before uar_r */
-+    int32_t fill_q8, integral, correction;
++    uint32_t bursts;                              /* consumer only: a burst's first block has been seen (uar_first) */
++    int32_t fill_q8, integral, correction, aim;  /* aim: the correction the last burst asked for */
++    int32_t learned;                              /* a slow mean of aim: the clocks' offset, kept across re-primes */
 +    uint32_t fill_min, fill_max, limited;         /* consumer diagnostics */
 +} uar;
 +static volatile uint8_t uac_rx_gain = 128u;
++static volatile uint32_t uar_loud_ms;              /* fm1_ms of the last block above -54 dBFS (project.c audio_quiet) */
++static volatile uint32_t uar_track_q12 = 4096u;    /* the cartridge track's LEVEL and MUTE, Q12 (seq.c cart_tracks_block) */
++static volatile uint32_t uar_peak;                 /* the largest |sample| since the cartridge track's meter took it */
++static volatile uint8_t uar_first;                 /* the next block is a burst's first (audio.c): the rate loop's turn */
++static volatile uint32_t uar_mark;                 /* uar_w as that burst began */
++static void uac_rx_burst(void)                     /* a DAC burst begins: the audio interrupt's entry, before it renders */
++{
++    uar_mark = uar_w;
++    uar_first = 1;
++}
 +
 +/* Producer only. Published while the audio ISR cannot interrupt TIMER5. Startup
 + * / detach callers outside TIMER5 must already have IRQs masked (usb.c contract). */
@@ -1183,8 +1465,9 @@ index 0000000..1328f89
 +/* 4-point Catmull-Rom (Hermite) interpolation, fraction f in Q15. With linear
 + * interpolation the slowly sweeping fraction modulated the treble by up to
 + * 2.4 dB at 10 kHz, a tremolo at the beat rate of the two 44.1 kHz clocks;
-+ * this keeps it under 0.5 dB. The 64-bit products never overflow, even on
-+ * full-scale steps (the master limiter follows the mix; the mix is int32). */
++ * this keeps it to 0.5 dB at 9 kHz, 0.7 dB at 10 kHz. The 64-bit products
++ * never overflow, even on full-scale steps (the master limiter follows the
++ * mix; the mix is int32). */
 +static int32_t uac_rx_hermite(int32_t xm1, int32_t x0, int32_t x1, int32_t x2, int32_t f)
 +{
 +    int32_t a1 = x1 - xm1, a2 = 2 * xm1 - 5 * x0 + 4 * x1 - x2, a3 = 3 * (x0 - x1) + x2 - xm1;
@@ -1205,29 +1488,43 @@ index 0000000..1328f89
 +
 +static void uac_rx_mix(int32_t *l, int32_t *r, uint32_t n)
 +{
-+    int32_t sl[UAR_BLOCK], sr[UAR_BLOCK], error, corr;
-+    uint32_t flags, epoch, rd, wr, phase, step, i, gain, hist;
++    int32_t sl[UAR_BLOCK], sr[UAR_BLOCK], error, corr, g0, dg;
++    uint32_t flags, epoch, rd, wr, occ, phase, step, i, gain, hist, peak = 0, first = uar_first, mark = uar_mark;
++    uar_first = 0;
 +    if (!n || n > UAR_BLOCK)
 +        return;
++    uar.bursts |= first;
 +    flags = UAC_RX_LOCK();
 +    epoch = uar.generation;
 +    if (uar.epoch != epoch) {
 +        uar_r = uar.floor;               /* only the consumer writes its cursor */
 +        uar.epoch = epoch;
 +        uar.go = uar.phase = 0;
-+        uar.fill_q8 = (int32_t)UAR_TARGET << 8;
-+        uar.integral = uar.correction = 0;
++        uar.fill_q8 = (int32_t)UAR_TARGET_FIRST << 8;   /* (the rate learned is kept: the host's clock is the same) */
++        uar.integral = uar.learned * 2048;
++        uar.aim = uar.correction = uar.learned;
++        uar.ramp = uar.g_last = 0;
 +        uar.reprimes++;
 +    }
 +    rd = uar_r;
 +    wr = uar_w;
 +    UAC_RX_BARRIER();
-+    if (!uar.active || (!uar.go && wr - rd < UAR_PRIME)) {
++    occ = mark - rd;                              /* the occupancy as the burst began */
++    if (!first || occ > wr - rd)
++        occ = wr - rd;                            /* (another block, or the ring reset since) */
++    /* a start waits for a burst's first block, its prime counted as the burst began (where the rate loop
++     * reads, aiming at UAR_TARGET_FIRST), once the bursts are known: a prime counted later in a burst would
++     * put the first reading off the aim */
++    if (!uar.active || (!uar.go && (occ < UAR_PRIME || (uar.bursts && !first)))) {
 +        UAC_RX_UNLOCK(flags);
 +        return;
 +    }
 +    if (!uar.go) {
 +        uar.go = 1;
++        if (occ > UAR_TARGET_FIRST) {             /* start at the aim: no rate excursion to drain the prime */
++            uar_r = rd += occ - UAR_TARGET_FIRST;
++            occ = UAR_TARGET_FIRST;
++        }
 +        uar.fill_min = wr - rd;
 +        uar.fill_max = wr - rd;
 +        uar.hist = uar_ring[rd & UAR_MASK];       /* x[-1] = x[0]: a constant stream starts flat */
@@ -1237,17 +1534,25 @@ index 0000000..1328f89
 +    gain = uac_rx_gain;
 +    UAC_RX_UNLOCK(flags);
 +    if (gain > 128u) gain = 128u;
-+    /* PI occupancy correction, updated once per block. 93 ms occupancy filter
-+     * suppresses the DAC's 256-frame burst / 1 ms USB packet sawtooth. Q24 phase
-+     * allows < 0.06 ppm rate steps; a 32-block slew avoids abrupt ratio changes. */
-+    uar.fill_q8 += (((int32_t)(wr - rd) << 8) - uar.fill_q8) / 128;
-+    error = (uar.fill_q8 - ((int32_t)UAR_TARGET << 8)) / 256;
-+    uar.integral = uac_rx_clamp(uar.integral + error * (int32_t)n,
-+                              -UAR_CORR_MAX * 2048, UAR_CORR_MAX * 2048);
-+    corr = error * 512 + uar.integral / 2048;
-+    if (corr > UAR_CORR_MAX || corr < -UAR_CORR_MAX) uar.limited++;
-+    corr = uac_rx_clamp(corr, -UAR_CORR_MAX, UAR_CORR_MAX);
-+    uar.correction += (corr - uar.correction) / 32;
++    gain = gain * uar_track_q12 >> 12;            /* (the track's LEVEL above its default: up to +11.5 dB) */
++    if (UAR_RAMP && uar.ramp < UAR_RAMP)
++        gain = gain * ++uar.ramp / UAR_RAMP;
++    g0 = UAR_RAMP ? (int32_t)uar.g_last : (int32_t)gain;
++    dg = ((int32_t)gain - g0) * 256 / (int32_t)n;  /* Q8 per frame */
++    /* PI occupancy correction, updated once per burst at its first block. A 93 ms occupancy filter
++     * suppresses the 1 ms USB packet jitter. Q24 phase allows < 0.06 ppm rate steps; a 32-block slew
++     * avoids abrupt ratio changes. */
++    if (first) {
++        uar.fill_q8 += (((int32_t)occ << 8) - uar.fill_q8) / 16;
++        error = (uar.fill_q8 - ((int32_t)UAR_TARGET_FIRST << 8)) / 256;
++        uar.integral = uac_rx_clamp(uar.integral + error * (int32_t)(n * 8u),
++                                  -UAR_CORR_MAX * 2048, UAR_CORR_MAX * 2048);
++        corr = error * 512 + uar.integral / 2048;
++        if (corr > UAR_CORR_MAX || corr < -UAR_CORR_MAX) uar.limited++;
++        uar.aim = uac_rx_clamp(corr, -UAR_CORR_MAX, UAR_CORR_MAX);
++        uar.learned += (uar.aim - uar.learned) / 64;
++    }
++    uar.correction += (uar.aim - uar.correction) / 32;
 +    step = UAR_ONE + (uint32_t)uar.correction;
 +    if (wr - rd < uar.fill_min) uar.fill_min = wr - rd;
 +    if (wr - rd > uar.fill_max) uar.fill_max = wr - rd;
@@ -1259,10 +1564,13 @@ index 0000000..1328f89
 +        b = uar_ring[(rd + 1u) & UAR_MASK];
 +        c = uar_ring[(rd + 2u) & UAR_MASK];
 +        f = (int32_t)(phase >> 9);                 /* Q15 */
-+        sl[i] = uac_rx_hermite((int16_t)(uint16_t)hist, (int16_t)(uint16_t)a,
-+                               (int16_t)(uint16_t)b, (int16_t)(uint16_t)c, f) * (int32_t)gain / 128;
-+        sr[i] = uac_rx_hermite((int16_t)(uint16_t)(hist >> 16), (int16_t)(uint16_t)(a >> 16),
-+                               (int16_t)(uint16_t)(b >> 16), (int16_t)(uint16_t)(c >> 16), f) * (int32_t)gain / 128;
++        {
++            int32_t g = g0 + ((dg * (int32_t)i) >> 8);
++            sl[i] = uac_rx_hermite((int16_t)(uint16_t)hist, (int16_t)(uint16_t)a,
++                                   (int16_t)(uint16_t)b, (int16_t)(uint16_t)c, f) * g / 128;
++            sr[i] = uac_rx_hermite((int16_t)(uint16_t)(hist >> 16), (int16_t)(uint16_t)(a >> 16),
++                                   (int16_t)(uint16_t)(b >> 16), (int16_t)(uint16_t)(c >> 16), f) * g / 128;
++        }
 +        phase += step;
 +        k = phase >> 24;                           /* 0..2: the frame before the new cursor was read above */
 +        if (k) {
@@ -1278,14 +1586,24 @@ index 0000000..1328f89
 +    } else if (i != n) {
 +        uar.underruns++;
 +        uar.go = uar.phase = 0;
-+        uar_r = uar_w;                            /* drop tail; re-prime cleanly */
-+        uar.fill_q8 = (int32_t)UAR_TARGET << 8;
-+        uar.integral = uar.correction = 0;
++        uar_r = uar_w;                            /* drop tail; re-prime cleanly; back to the rate learned before */
++        uar.fill_q8 = (int32_t)UAR_TARGET_FIRST << 8;       /* the gap (whose catch-up it would follow) */
++        uar.integral = uar.learned * 2048;
++        uar.aim = uar.correction = uar.learned;
++        uar.ramp = uar.g_last = 0;
 +    } else {
 +        for (i = 0; i < n; i++) {
++            uint32_t al = (uint32_t)(sl[i] < 0 ? -sl[i] : sl[i]), ar = (uint32_t)(sr[i] < 0 ? -sr[i] : sr[i]);
++            if (al > peak) peak = al;
++            if (ar > peak) peak = ar;
 +            l[i] = uac_rx_add(l[i], sl[i]);
 +            r[i] = uac_rx_add(r[i], sr[i]);
 +        }
++        if (peak > 64u)
++            uar_loud_ms = uar.now;                /* (the producer's fm1_ms, a word read) */
++        if (peak > uar_peak)
++            uar_peak = peak;
++        uar.g_last = gain;
 +        uar.phase = phase;
 +        uar.hist = hist;
 +        UAC_RX_BARRIER();
@@ -1296,7 +1614,7 @@ index 0000000..1328f89
 +#endif
 diff --git a/firmware/src/ui_cartridge.c b/firmware/src/ui_cartridge.c
 new file mode 100644
-index 0000000..7cfbc27
+index 0000000..6790b12
 --- /dev/null
 +++ b/firmware/src/ui_cartridge.c
 @@ -0,0 +1,135 @@
@@ -1395,7 +1713,7 @@ index 0000000..7cfbc27
 +        if (cart.online) {                                  /* "<firmware> OK": what the cartridge runs */
 +            str_cpy(b, (const char *)cart.view + CART_FW_NAME, 12);
 +            if (!b[0]) str_cpy(b, "LINK", sizeof b);
-+            str_cpy(b + str_len(b), " OK", 4);
++            str_cpy(b + str_len(b), uar.active ? " OK" : " NO AUDIO", 10);   /* (the stream stopped: replug) */
 +        } else str_cpy(b, "NO LINK", sizeof b);
 +        cv_text(234 - text_w(&FONT_S, b), 3, &FONT_S, b, cart.online ? C_WHITE : C_DIM);
 +        cv_blit(0, 0);
@@ -1436,10 +1754,27 @@ index 0000000..7cfbc27
 +    cv_blit(0, CART_FOOT_Y);
 +}
 diff --git a/firmware/src/ui_draw.c b/firmware/src/ui_draw.c
-index 138eefb..51072f7 100644
+index 138eefb..b9079f0 100644
 --- a/firmware/src/ui_draw.c
 +++ b/firmware/src/ui_draw.c
-@@ -379,6 +379,10 @@ UI_SMALL static uint32_t graph_signature(void)
+@@ -28,10 +28,15 @@ UI_SMALL static int32_t batt_level(void)                         /* ADC ch3 thre
+     return song.batt_raw >= 591 ? 3 : song.batt_raw >= 561 ? 2 : song.batt_raw >= 531 ? 1 : 0;
+ }
+ /* charging (a USB host powers us; there is no charger status line): bars fill 1, 2, 3
+- * every 0.6 s, so the header is redrawn twice a second at most; else the level */
++ * every 0.6 s, so the header is redrawn twice a second at most; else the level. The cartridge is a host
++ * that powers nothing: with it, the real level */
+ UI_SMALL static int32_t batt_shown(void)
+ {
++#if FELUCCA_CARTRIDGE
++    if (usb.config && !usb.suspended && !cart.online)
++#else
+     if (usb.config && !usb.suspended)
++#endif
+         return 1 + (int32_t)((fm1_ms / 600u) % 3u);
+     return batt_level();
+ }
+@@ -379,6 +384,10 @@ UI_SMALL static uint32_t graph_signature(void)
      for (i = 0; i < P_COUNT; i++)
          h = (h ^ (uint32_t)t->p[i]) * 16777619u;
      h ^= (uint32_t)TSEL->preset * 7u + (uint32_t)song.g[G_SLOT] * 13u + TSEL->user * 257u + up_gen * 7919u + ui.uslot * 104729u;
@@ -1450,7 +1785,7 @@ index 138eefb..51072f7 100644
      {   /* (2.7) the favourites: the PRESETS list and its FAV column */
          uint32_t q;
          for (q = 0; q < FAV_N; q++) h = h * 31u + fav[q];
-@@ -401,6 +405,19 @@ UI_SMALL static void graph_browse(void)
+@@ -401,6 +410,19 @@ UI_SMALL static void graph_browse(void)
  {
      uint32_t total, cur = preset_pos(&total), e, k;
      int32_t row;
@@ -1470,7 +1805,7 @@ index 138eefb..51072f7 100644
      if (!total)
          return;
      for (row = -3; row <= 3; row++) {
-@@ -496,6 +513,13 @@ UI_SMALL static void trk_short_name(uint32_t c, char *b)      /* the track's sou
+@@ -496,6 +518,13 @@ UI_SMALL static void trk_short_name(uint32_t c, char *b)      /* the track's sou
  {
      const track_t *t = &trk[c];
      const engine_t *e = ENGINES[t->eng_req % NENGINES];
@@ -1484,7 +1819,7 @@ index 138eefb..51072f7 100644
      if (c == TRK_DRUM)
          str_cpy(b, "DRUM", 13);
      else if (user_of(t) < UP_SLOTS)
-@@ -791,6 +815,15 @@ UI_SMALL static void draw_foot(void)
+@@ -791,8 +820,17 @@ UI_SMALL static void draw_foot(void)
          up_name(user_of(t), pn);                       /* a user preset */
      else if (e->npresets)
          str_cpy(pn, e->presets[TSEL->preset % e->npresets].name, sizeof pn);
@@ -1498,9 +1833,12 @@ index 138eefb..51072f7 100644
 +    }
 +#endif
      if (ui.home) {
-         str_cpy(ti, "HOME", sizeof ti);
+-        str_cpy(ti, "HOME", sizeof ti);
++        str_cpy(ti, CART_TRACK(t) ? "CARTRIDGE" : "HOME", sizeof ti);   /* (its knobs, sound and LEVEL: GLO > CARTRIDGE) */
      } else {                                           /* page title + number in its family: "ENV DEST 2/2" */
-@@ -895,6 +928,21 @@ UI_SMALL static void draw_columns(void)
+         uint32_t n, k = page_pos(&n);
+         const char *pt = pg->scope == SC_ENGINE ? e->page_title[pg->id[0] != P_E0] : 0;   /* EDIT: the engine's */
+@@ -895,6 +933,21 @@ UI_SMALL static void draw_columns(void)
      if (cur_page()->graph == GR_BROWSE) {
          uint32_t total, cur = preset_pos(&total);
          char u[8];
@@ -1522,7 +1860,7 @@ index 138eefb..51072f7 100644
          fmt_int(val, (int32_t)cur + 1);
          str_cpy(u, "/", 8);
          fmt_int(u + 1, (int32_t)total);
-@@ -995,6 +1043,9 @@ UI_SMALL static void ui_timers(void)
+@@ -995,6 +1048,9 @@ UI_SMALL static void ui_timers(void)
  static void vis_draw(void);                     /* ui_vis.c */
  static int vis_shown(void);
  static uint8_t vis_on, vis_shown_last, vis_name_t;   /* the visualiser (ui_vis.c): on, drawn last frame, its name's time */
@@ -1532,7 +1870,7 @@ index 138eefb..51072f7 100644
  UI_SMALL static void ui_draw(void)
  {
      ui.frame++;
-@@ -1084,6 +1135,11 @@ UI_SMALL static void ui_draw(void)
+@@ -1084,6 +1140,11 @@ UI_SMALL static void ui_draw(void)
          ui.force = 0;
          return;
      }
@@ -1545,20 +1883,27 @@ index 138eefb..51072f7 100644
      if (ui.force)
          draw_frame();
 diff --git a/firmware/src/ui_input.c b/firmware/src/ui_input.c
-index 1335bb6..c7a9ad1 100644
+index 1335bb6..b6c6f27 100644
 --- a/firmware/src/ui_input.c
 +++ b/firmware/src/ui_input.c
-@@ -409,6 +409,9 @@ UI_SMALL static void edit_param(uint32_t slot, int32_t steps)
+@@ -409,6 +409,16 @@ UI_SMALL static void edit_param(uint32_t slot, int32_t steps)
      const param_desc_t *d;
      uint32_t id = pg->id[slot];
      int32_t v;
 +#if FELUCCA_CARTRIDGE
-+    if (pg->scope == SC_CART) { cart_turn(slot, steps); return; }
++    if (pg->scope == SC_CART) {                           /* knob acceleration on the cartridge's lists and values */
++        const uint8_t *v = cart.view;
++        char c = (char)v[CART_VAL_NAME];
++        int32_t range = slot == 0 ? v[CART_NENG] : slot == 1 ? cart_u14(v + CART_NPRE) : slot == 2 ? cart_u14(v + CART_NPAR)
++                      : (c >= '0' && c <= '9') || c == '-' || c == '+' ? cart_s14(v + CART_MAX) - cart_s14(v + CART_MIN) : 0;
++        cart_turn(slot, accel(EN_K1 + slot, steps, range));
++        return;
++    }
 +#endif
      if (is_drum(TSEL) && !page_for_drum(pg))
          return;                                           /* "DRUM TRACK": nothing to edit here */
      if (pg->scope == SC_STEP) {
-@@ -420,6 +423,15 @@ UI_SMALL static void edit_param(uint32_t slot, int32_t steps)
+@@ -420,6 +430,15 @@ UI_SMALL static void edit_param(uint32_t slot, int32_t steps)
          return;
      }
      if (pg->graph == GR_BROWSE) {                         /* KNOB 1: one preset, KNOB 2: the next / previous engine */
@@ -1574,7 +1919,7 @@ index 1335bb6..c7a9ad1 100644
          if (slot == 0u && !is_drum(TSEL)) {
              uint32_t total, cur = preset_pos(&total);
              if (total)
-@@ -1127,6 +1139,11 @@ UI_SMALL static void ui_input(void)
+@@ -1127,6 +1146,11 @@ UI_SMALL static void ui_input(void)
           * page and TRACKS only (the drum track: its kits); elsewhere a stray turn would throw away the sound
           * being edited. Every detent counts */
          uint32_t total, cur = preset_pos(&total);
@@ -1587,7 +1932,7 @@ index 1335bb6..c7a9ad1 100644
              TDRUM->p[P_E0] = (int16_t)clamp(TDRUM->p[P_E0] + s, 0, DRUM_KITS - 1);
          else if (total)
 diff --git a/firmware/src/ui_menu.c b/firmware/src/ui_menu.c
-index a0d96bc..ca9f2d7 100644
+index a0d96bc..c61381e 100644
 --- a/firmware/src/ui_menu.c
 +++ b/firmware/src/ui_menu.c
 @@ -7,19 +7,58 @@
@@ -1757,15 +2102,17 @@ index a0d96bc..ca9f2d7 100644
      case MI_RATE:                                      /* (2.7 beta) AUTO 44.1 48: the knob steps (stops at the ends),
                                                          * OCT+ round; at the next start (usb.c usb_rate_mode) */
          if (s > 0 && usb_rate < 2u)
-@@ -261,6 +333,24 @@ UI_SMALL static void mi_set(uint32_t i, int32_t s)
+@@ -261,6 +333,26 @@ UI_SMALL static void mi_set(uint32_t i, int32_t s)
          else if (!s)
              usb_rate = (uint8_t)((usb_rate + 1u) % 3u);
          break;
 +#endif
 +#if FELUCCA_UAC_RX
 +    case MI_RETURN: {
++        static uint8_t before = 128;                    /* OCT+ unmutes to the level it muted */
 +        int32_t percent = (int32_t)(uac_rx_gain * 100u + 64u) / 128;
-+        if (!s) uac_rx_gain = uac_rx_gain ? 0 : 128;
++        if (!s && uac_rx_gain) before = uac_rx_gain, uac_rx_gain = 0;
++        else if (!s) uac_rx_gain = before;
 +        else {
 +            percent = clamp(percent + (s > 0 ? 1 : -1), 0, 100);
 +            uac_rx_gain = (uint8_t)((percent * 128 + 50) / 100);
@@ -1803,7 +2150,7 @@ index d5ef0ec..14b85cf 100644
          b[13] = 0;
          h = studio_hash(selected + level * 7u + silent * 997u + rec * 1999u + solo * 4999u + len * 37u +
 diff --git a/firmware/src/usb.c b/firmware/src/usb.c
-index 0615acf..8cbf9dc 100644
+index 0615acf..3ed17aa 100644
 --- a/firmware/src/usb.c
 +++ b/firmware/src/usb.c
 @@ -19,13 +19,18 @@
@@ -1856,7 +2203,13 @@ index 0615acf..8cbf9dc 100644
  } usb;
  
  #if FELUCCA_OTA
-@@ -162,6 +184,10 @@ static volatile uint32_t mi_w, mi_r, mo_w, mo_r;
+@@ -159,46 +181,79 @@ static volatile uint32_t so_w, so_r;
+ #define MQ 64u
+ static uint32_t midi_in_q[MQ], midi_out_q[MQ];
+ static volatile uint32_t mi_w, mi_r, mo_w, mo_r;
++#if FELUCCA_CARTRIDGE
++static uint16_t mo_lost;                           /* channels with a note-off dropped on a full ring (audio ISR only) */
++#endif
  static void midi_out_event(uint32_t pkt)            /* from the audio ISR */
  {
      if (usb.config && mo_w - mo_r < MQ) {
@@ -1867,7 +2220,26 @@ index 0615acf..8cbf9dc 100644
          midi_out_q[mo_w % MQ] = pkt;
          RING_PUBLISH();
          mo_w++;
-@@ -172,33 +198,43 @@ static void midi_out_event(uint32_t pkt)            /* from the audio ISR */
+     }
++#if FELUCCA_CARTRIDGE
++    else if (usb.config && (pkt & 0xfu) == 8u)         /* a note-off the full ring lost: the cartridge would hold it */
++        mo_lost |= (uint16_t)(1u << ((pkt >> 8) & 15u));
++#endif
++}
++#if FELUCCA_CARTRIDGE
++/* each block (seq.c cart_tracks_block): an All Notes Off for every channel that lost a note-off, once there is room */
++static void midi_out_lost_flush(void)
++{
++    uint32_t ch;
++    for (ch = 0; mo_lost && ch < 16u; ch++)
++        if (((mo_lost >> ch) & 1u) && usb.config && mo_w - mo_r < MQ) {
++            mo_lost &= (uint16_t)~(1u << ch);
++            midi_out_event(0x0Bu | (0xB0u | ch) << 8 | 123u << 16);
++        }
+ }
++#endif
+ 
+ /* ------------------------------------------------------- descriptors --- */
  /* interfaces: 0 audio control, 1 MIDI streaming, 2 audio streaming (FELUCCA_UAC), then CDC's two.
   * bcdDevice: 3.00 MIDI, +0.01 CDC, +0.10 the audio input, +0.20 more with 48 kHz (2.5) (hosts cache descriptors
   * per version) */
@@ -1920,7 +2292,7 @@ index 0615acf..8cbf9dc 100644
  #endif
      9, 4, 1, 0, 2, 1, 3, 0, 0,
      7, 0x24, 1, 0x00, 0x01, 0x41, 0x00,
-@@ -223,6 +259,14 @@ static const uint8_t CFG_DESC[] = {
+@@ -223,6 +278,14 @@ static const uint8_t CFG_DESC[] = {
      9, 5, 0x84, 0x05, UAC_MAXP & 0xFF, UAC_MAXP >> 8, 1, 0, 0,   /* EP4 IN isochronous async, 1 ms */
      7, 0x25, 1, 0x01, 0, 0, 0,                          /* CS endpoint: sampling frequency control */
  #endif
@@ -1935,7 +2307,7 @@ index 0615acf..8cbf9dc 100644
  #if FELUCCA_CDC
      8, 0x0B, CDC_IF, 2, 2, 2, 1, 0,                     /* IAD: CDC ACM (IF 2-3, 3-4) */
      9, 4, CDC_IF, 0, 1, 2, 2, 1, 0,                     /* communication */
-@@ -246,7 +290,7 @@ typedef char cfg_len_ok[sizeof CFG_DESC == CFG_LEN ? 1 : -1];
+@@ -246,7 +309,7 @@ typedef char cfg_len_ok[sizeof CFG_DESC == CFG_LEN ? 1 : -1];
   * are loaded first), so the host sees one device from the start */
  static uint8_t usb_cdc_on;
  static const uint8_t DEV_DESC_PLAIN[18] = {18, 1, 0x10, 0x01, 0, 0, 0, 64, 0x09, 0x12, 0x01, 0x00,
@@ -1944,7 +2316,7 @@ index 0615acf..8cbf9dc 100644
  #define CFG_PLAIN_LEN (CFG_LEN - 74)                    /* without the audio IAD (8) and the CDC block (66) */
  static uint8_t cfg_plain[CFG_PLAIN_LEN];
  static const uint8_t *cfg_plain_get(void)
-@@ -453,6 +497,80 @@ static void uac_rate_set(uint32_t hz)
+@@ -453,6 +516,80 @@ static void uac_rate_set(uint32_t hz)
  }
  #endif
  
@@ -2025,7 +2397,7 @@ index 0615acf..8cbf9dc 100644
  static void ep1_config(void)
  {
      fm1_usb_ep_txbuf(1, ep1tx);
-@@ -493,6 +611,11 @@ static void ep1_config(void)
+@@ -493,6 +630,11 @@ static void ep1_config(void)
      fm1_usb_ep_enable(1u << 4);
      uac_stream(0);
  #endif
@@ -2037,7 +2409,7 @@ index 0615acf..8cbf9dc 100644
  }
  
  static void e0_chunk(void)
-@@ -546,6 +669,9 @@ static void ep0_service(void)
+@@ -546,6 +688,9 @@ static void ep0_service(void)
  #endif
  #if FELUCCA_UAC
          uac.e0_rx = 0;
@@ -2047,7 +2419,7 @@ index 0615acf..8cbf9dc 100644
  #endif
          return;
      }
-@@ -557,6 +683,9 @@ static void ep0_service(void)
+@@ -557,6 +702,9 @@ static void ep0_service(void)
  #endif
  #if FELUCCA_UAC
          uac.e0_rx = 0;
@@ -2057,7 +2429,7 @@ index 0615acf..8cbf9dc 100644
  #endif
      }
      if (usb.e0_tx) {
-@@ -576,6 +705,18 @@ static void ep0_service(void)
+@@ -576,6 +724,18 @@ static void ep0_service(void)
          goto ack;
      }
  #endif
@@ -2076,7 +2448,7 @@ index 0615acf..8cbf9dc 100644
  #if FELUCCA_UAC
      if (uac.e0_rx) {                                    /* SET_CUR sampling frequency: 3 bytes, Hz */
          uac.rate_sets++;
-@@ -585,6 +726,8 @@ static void ep0_service(void)
+@@ -585,6 +745,8 @@ static void ep0_service(void)
          goto ack;
      }
  #endif
@@ -2085,7 +2457,7 @@ index 0615acf..8cbf9dc 100644
      for (i = 0; i < 8u; i++)
          s[i] = ep0buf[i];
      usb.setups++;
-@@ -607,7 +750,7 @@ static void ep0_service(void)
+@@ -607,7 +769,7 @@ static void ep0_service(void)
          goto stall;
      }
      case 0x0009:                                        /* SET_CONFIGURATION: 0 or 1 only */
@@ -2094,7 +2466,7 @@ index 0615acf..8cbf9dc 100644
              goto stall;
          usb.config = s[2];
          if (usb.config == 1u)
-@@ -618,6 +761,12 @@ static void ep0_service(void)
+@@ -618,6 +780,12 @@ static void ep0_service(void)
          if (usb.config != 1u)
              uac_stream(0);
          uac_rate_set(UAC_RATE);                         /* a new configuration starts at 44.1 */
@@ -2107,7 +2479,7 @@ index 0615acf..8cbf9dc 100644
  #endif
          goto ack;
      case 0x8008:
-@@ -628,7 +777,16 @@ static void ep0_service(void)
+@@ -628,7 +796,16 @@ static void ep0_service(void)
      case 0x8200:
          e0_send(zero2, 2, wlength);
          return;
@@ -2125,7 +2497,7 @@ index 0615acf..8cbf9dc 100644
  #if FELUCCA_UAC
          if (s[4] == UAC_AS_IF && wvalue <= 1u && usb.config) {
              uac_ep4_reset();
-@@ -640,6 +798,14 @@ static void ep0_service(void)
+@@ -640,6 +817,14 @@ static void ep0_service(void)
              goto ack;
          goto stall;
      case 0x810A:
@@ -2140,7 +2512,7 @@ index 0615acf..8cbf9dc 100644
  #if FELUCCA_UAC
          if (s[4] == UAC_AS_IF) {
              static uint8_t alt;
-@@ -656,11 +822,15 @@ static void ep0_service(void)
+@@ -656,11 +841,15 @@ static void ep0_service(void)
  #else
          uint32_t ep = s[4] & 0x0Fu, last = 1u;
  #endif
@@ -2157,7 +2529,7 @@ index 0615acf..8cbf9dc 100644
              goto stall;                                 /* not an endpoint we have */
          if (ep) {                                       /* (EP0 has no halt to clear) */
              sie_wr(S_INDEX, ep);
-@@ -689,36 +859,60 @@ static void ep0_service(void)
+@@ -689,36 +878,60 @@ static void ep0_service(void)
      case 0x2123:                                        /* SEND_BREAK */
          goto ack;
  #endif
@@ -2232,7 +2604,7 @@ index 0615acf..8cbf9dc 100644
      }
  #endif
      default:
-@@ -1284,6 +1478,10 @@ static void usb_poll(void)                              /* TIMER5 ISR, 2 kHz */
+@@ -1284,6 +1497,10 @@ static void usb_poll(void)                              /* TIMER5 ISR, 2 kHz */
          uac.e0_rx = 0;
          uac_stream(0);
          uac_rate_set(UAC_RATE);
@@ -2243,7 +2615,7 @@ index 0615acf..8cbf9dc 100644
  #endif
          fm1_usb_ep0_buf(ep0buf);
          sie_wr(S_INTRUSBE, 0x07);
-@@ -1311,11 +1509,17 @@ static void usb_poll(void)                              /* TIMER5 ISR, 2 kHz */
+@@ -1311,11 +1528,17 @@ static void usb_poll(void)                              /* TIMER5 ISR, 2 kHz */
  #if FELUCCA_UAC
      uac_service();
  #endif
@@ -2261,7 +2633,7 @@ index 0615acf..8cbf9dc 100644
      fm1_usb_reset();                                    /* reset whatever the ROM left */
      fm1_delay_ms(25);
      fm1_usb_attach(ep0buf);
-@@ -1345,6 +1549,9 @@ static void usb_retry(uint32_t now_ms)
+@@ -1345,6 +1568,9 @@ static void usb_retry(uint32_t now_ms)
  static void usb_detach(void)
  {
      usb.detached = 1;
@@ -2398,10 +2770,10 @@ index 0000000..296c45b
 +}
 diff --git a/tests/cartridge_ui_test.c b/tests/cartridge_ui_test.c
 new file mode 100644
-index 0000000..32defe1
+index 0000000..cdf9885
 --- /dev/null
 +++ b/tests/cartridge_ui_test.c
-@@ -0,0 +1,410 @@
+@@ -0,0 +1,574 @@
 +/* SPDX-License-Identifier: GPL-3.0-only */
 +#include <stdint.h>
 +#define FELUCCA_CARTRIDGE 1
@@ -2437,7 +2809,7 @@ index 0000000..32defe1
 +{
 +    uint32_t i;
 +    for (i = 0; i < CART_REPLY_SIZE; ++i) sysex_byte(r[i]);
-+    cart_service(1);
++    cart_service(cart.active);                     /* (the page as it is: shown or hidden) */
 +}
 +static void exchange(void)
 +{
@@ -2461,9 +2833,15 @@ index 0000000..32defe1
 +#endif
 +    response(r);
 +}
-+static void refresh_page(void)
++static void leave_page(void)                      /* the page hidden, its leaving query answered */
 +{
 +    cart_service(0);
++    if (so_w != so_r) exchange();
++}
++static void refresh_page(void)                    /* leave the page (its query answered), open it again */
++{
++    cart_service(0);
++    if (so_w != so_r) exchange();
 +    fm1_ms += 501;
 +    cart_service(1);
 +}
@@ -2510,8 +2888,13 @@ index 0000000..32defe1
 +    cart_turn(3, 2);
 +    check(!cart.delta[3], "knobs wait for the page re-entry state before editing");
 +    if (so_w != so_r) exchange();
-+    /* A full TX ring cannot swallow the entry refresh or allow stale edits. */
++    /* Leaving the page sends a query: the cartridge's cursor moves off FIRMWARE, a switch it armed is cancelled. */
++    cart_turn(3, 1);
 +    cart_service(0);
++    check(cart.waiting && cart.q[CART_OP] == CART_QUERY && !cart.delta[3],
++          "leaving the page queries the cartridge (an armed FIRMWARE switch is cancelled), turns not sent dropped");
++    exchange();
++    /* A full TX ring cannot swallow the entry refresh or allow stale edits. */
 +    so_w = so_r + SXQ;
 +    cart_service(1); cart_turn(0, 1);
 +    check(!cart.waiting && cart.refresh && !cart.delta[0],
@@ -2587,7 +2970,7 @@ index 0000000..32defe1
 +    check(!(ct_set[0][0] | ct_set[0][1] | ct_set[0][2] | ct_set[0][3]), "STOP ends every note sent to the cartridge");
 +    put_step(&trk[0], 0, 0, &n60, ST_REST, 0);
 +    /* PRESETS on HOME browses the cartridge's presets on its track */
-+    ui.home = 1; song.sel = 0;
++    ui.home = 1; song.sel = 0; leave_page();
 +    pre = cart_u14(cart.view + CART_PRE);
 +    if (pre + 1u < cart_u14(cart.view + CART_NPRE)) {
 +        encs[panel.enc[EN_PRESET]] = 1; frame();
@@ -2646,6 +3029,135 @@ index 0000000..32defe1
 +    check(cart_tracks == 1u, "channel 1 again: track 1 is the cartridge's");
 +    frame();
 +}
++/* the note lifecycle and the link around the cartridge track: takeover, panics, a full MIDI OUT ring, autosave,
++ * PRESETS across engines, the liveness query, the battery, the clock */
++static void test_cartridge_lifecycle(void)
++{
++    uint32_t i, sent;
++    set_cart_channel(0); frame();
++    mo_r = mo_w;
++    set_cart_channel(1); frame();
++    check(cart_tracks == 1u && midi_seen(0xB0, 123) == 1,
++          "a track the cartridge takes: an All Notes Off on its channel ends the keys' plain notes");
++    mo_r = mo_w;
++    trk_note_on(&trk[0], 68, 90);
++    trk[0].pold = 1; panic_req |= 1u; frame(); trk[0].pold = 0;
++    check(midi_seen(0x80, 68) == 1, "a panic during a preset fade still ends the cartridge track's notes");
++    trk_note_on(&trk[0], 70, 90);
++    mo_w = mo_r + MQ;                                   /* the ring full (USB not draining) */
++    trk_note_off(&trk[0], 70);
++    check(mo_lost == 1u, "a note-off lost on a full ring is remembered");
++    mo_r = mo_w; frame();
++    check(midi_seen(0xB0, 123) == 1 && !mo_lost, "then an All Notes Off on that channel ends it");
++    trk_note_on(&trk[0], 72, 90);
++    check(!cart_quiet(), "autosave waits while a cartridge track holds a note");
++    trk_note_off(&trk[0], 72); frame();
++    uar_loud_ms = fm1_ms;
++    check(!cart_quiet(), "autosave waits while the USB return sounds");
++    fm1_ms += 1001;
++    check(cart_quiet(), "and saves once both are quiet");
++    usb.suspended = 0; usb.config = 1;
++    check(batt_shown() == batt_level(), "the battery shows its level with the cartridge (it powers nothing)");
++    {
++        uint8_t keep = cart.online;
++        cart.online = 0; i = (uint32_t)batt_shown(); cart.online = keep;
++        check(i >= 1u && i <= 3u, "a computer host still shows charging");
++    }
++    song.g[G_CLKOUT] = 0; song.g[G_SYNC] = 0; mo_r = mo_w; transport_req = 1;
++    frames(4); sent = midi_seen(0xFA, 0);
++    check(sent == 1 && midi_seen(0xF8, 0) > 0, "with the cartridge answering, START and the clock go out with CLOCK at OFF");
++    transport_req = 2; frames(2);
++    check(midi_seen(0xFC, 0) == 1, "and STOP");
++    {   /* a cartridge that comes up while the song plays: START on the next bar line, not where the song is */
++        uint32_t f, beat = 0, pos = 0, early = 0;
++        transport_req = 1; frames(2);
++        cart.online = 0; frame(); cart.online = 1; mo_r = mo_w;
++        for (f = 0; f < 200u && !midi_seen(0xFA, 0); f++) {
++            mo_r = mo_w; frame();
++            if (!f) early = midi_seen(0xFA, 0);
++            beat = clk_beat; pos = clk_pos;
++        }
++        check(!early && midi_seen(0xFA, 0) == 1 && beat % 4u == 0u && pos < 22u * CTL * (uint32_t)song.g[G_BPM],
++              "a cartridge back while the song plays gets START on the next bar line");
++        transport_req = 2; frames(2); mo_r = mo_w;
++    }
++    {
++        uint32_t was = uar.active;
++        uar.active = 1; cart_service(1); cart.dirty = 0;
++        uar.active = 0; cart_service(1);
++        check(cart.dirty, "the page header follows the stream (OK / NO AUDIO)");
++        uar.active = was; cart_service(1);
++    }
++#ifndef CART_REAL_SERVER
++    /* PRESETS across an engine boundary: one crossing at a time */
++    ui.home = 1; song.sel = 0; leave_page();
++    cart_put14(cart.view + CART_PRE, (uint16_t)(cart_u14(cart.view + CART_NPRE) - 1u)); cart.view[CART_ENG] = 3;
++    memset(cart.delta, 0, sizeof cart.delta);
++    encs[panel.enc[EN_PRESET]] = 1; frame();
++    encs[panel.enc[EN_PRESET]] = 1; frame();
++    check(cart.delta[0] == 1 && !cart.delta[1], "a second turn waits while PRESETS crosses into the next engine");
++    memset(cart.delta, 0, sizeof cart.delta); cart.to_last = 0;
++    cart_put14(cart.view + CART_PRE, 0);
++    encs[panel.enc[EN_PRESET]] = -1; frame();
++    encs[panel.enc[EN_PRESET]] = -1; frame();
++    check(cart.delta[0] == -1 && cart.to_last && !cart.delta[1], "and while it crosses back into the previous engine");
++    cart_service(1);                                    /* the page opened before the crossing went out */
++    check(!cart.to_last && !cart.delta[0], "a page opened before a crossing goes out drops it whole");
++    leave_page(); cart_browse(1);
++    check(cart.delta[1] == 1, "and PRESETS browses again");
++    memset(cart.delta, 0, sizeof cart.delta); cart.to_last = 0;
++    ui.home = 0;
++#endif
++    /* the page hidden: a query every 5 s while linked; an outage gives the track back, a reply takes it again */
++    leave_page();
++    while (so_w != so_r || cart.waiting) { fm1_ms += 251; cart_service(0); if (so_w != so_r) exchange(); }
++    cart_service(0);
++    check(cart.online && so_w == so_r, "linked, page hidden: no query before 5 s");
++    fm1_ms += 5001; cart_service(0);
++    check(cart.waiting && cart.q[CART_OP] == CART_QUERY, "linked, page hidden: a liveness query after 5 s");
++    cart_turn(1, 1);
++    check(cart.delta[1] == 1, "a PRESETS turn during the liveness query is kept");
++    exchange(); cart_service(0);
++    check(cart.waiting && cart.q[CART_OP] == CART_PRESET, "and goes out after its reply");
++    exchange();
++    fm1_ms += 5001; cart_service(0); drain_request();
++    for (i = 0; i < 4u; i++) { fm1_ms += 251; cart_service(0); drain_request(); }
++    check(!cart.online && !cart_tracks, "an unanswered liveness query gives the track back to Sloop's sound");
++    for (i = 0; i < 40u && !cart.online; i++) { fm1_ms += 501; cart_service(0); if (so_w != so_r) exchange(); }
++    check(cart.online && cart_tracks == 1u, "the cartridge back: the track is its again, the page never opened");
++    for (i = sent = 0; i < 6u; i++) {                   /* outage after outage: the budget refills on every reply */
++        uint32_t j;
++        fm1_ms += 5001; cart_service(0); drain_request();
++        for (j = 0; j < 4u; j++) { fm1_ms += 251; cart_service(0); drain_request(); }
++        for (j = 0; j < 8u && !cart.online; j++) { fm1_ms += 501; cart_service(0); if (so_w != so_r) exchange(); }
++        sent += cart.online;
++    }
++    check(sent == 6u, "and again after each of six outages in a row, within 4 s (the probes refilled by every reply)");
++    {   /* a newer cartridge's reply (a later version, fields appended) is read as far as this version's go */
++        uint8_t r[CART_REPLY_SIZE];
++        uint32_t j;
++        refresh_page(); assert(drain_request() == CART_REQUEST_SIZE);
++        memcpy(r, cart.view, sizeof r);
++        cart_header(r, cart_u14(last_request + CART_SEQ), CART_REPLY, cart_u14(last_request + CART_REV));
++        r[4] = CART_VERSION + 1;
++        for (j = 0; j + 1 < CART_REPLY_SIZE; ++j) sysex_byte(r[j]);
++        sysex_byte(0x12); sysex_byte(0x34); sysex_byte(0xf7);
++        cart_service(1);
++        check(cart.online && !cart.waiting && cart.view[4] == CART_VERSION + 1, "a newer cartridge's longer reply is understood");
++        refresh_page(); exchange();
++    }
++    /* the USB return follows the cartridge track's LEVEL and MUTE (TRACKS), its meter shows the return */
++    trk[0].p[P_LEVEL] = TP[P_LEVEL].def; cart_tracks_block();
++    check(uar_track_q12 == 4096u, "the track's default LEVEL: the return at unity");
++    trk[0].p[P_LEVEL] = 0; cart_tracks_block();
++    check(uar_track_q12 == 0u, "LEVEL 0 mutes the return, as the track shows");
++    trk[0].p[P_LEVEL] = 127; cart_tracks_block();
++    check(uar_track_q12 > 4096u && uar_track_q12 < 4u * 4096u, "LEVEL up: the return louder, as a track's");
++    trk[0].p[P_LEVEL] = TP[P_LEVEL].def; trk[0].p[P_MUTE] = 1; cart_tracks_block();
++    check(uar_track_q12 == 0u, "MUTE mutes the return");
++    trk[0].p[P_MUTE] = 0; trk[0].peak = 0; uar_peak = 5000; cart_tracks_block();
++    check(uar_track_q12 == 4096u && trk[0].peak >= 5000 && !uar_peak, "the track's meter reads the return");
++}
 +#ifndef CARTRIDGE_UI_HARNESS_ONLY
 +int main(int argc, char **argv)
 +{
@@ -2660,6 +3172,8 @@ index 0000000..32defe1
 +    cart_charge_boot();
 +    check(cart_keep.magic == CART_KEEP_MAGIC && cart_keep.boot_en == 1 && !cart_keep.off && !host_chg_writes,
 +          "boot reads the charger as the SoC left it (enabled) without writing");
++    check(cart_charge_on == 1, "CHARGE is ON by default: the charger stays on");
++    cart_charge_on = 0;                                 /* the AUTO policy, checked below */
 +    cart_service(0);
 +    check(cart.waiting && so_w != so_r && cart.probe == CART_PROBES - 1u,
 +          "hidden page probes the cartridge once USB is configured");
@@ -2720,6 +3234,7 @@ index 0000000..32defe1
 +        fm1_ms += 600; cart_service(1); exchange(); check(cart.online && !cart_on_firmware(), "back to the catalogue");
 +    }
 +    test_cartridge_track();
++    test_cartridge_lifecycle();
 +    int16_t local_params[P_COUNT]; memcpy(local_params, TSEL->p, sizeof local_params);
 +    uint8_t old_engine = cart.view[CART_ENG];
 +    encs[panel.enc[EN_K1]] = 1; encs[panel.enc[EN_K4]] = 3; frame();
@@ -2746,6 +3261,24 @@ index 0000000..32defe1
 +    check(last_request[CART_OP] == CART_PARAM, "KNOB 3 selects parameter");
 +    encs[panel.enc[EN_K4]] = 5; frame(); cart_service(1); exchange();
 +    check(last_request[CART_OP] == CART_VALUE, "KNOB 4 edits parameter value");
++#ifndef CART_REAL_SERVER
++    {   /* a value shown with its sign (+5, as PAN or a modulation amount) accelerates as -5 does */
++        uint8_t keep[CART_REPLY_SIZE];
++        int32_t turned[2];
++        uint32_t k, f;
++        memcpy(keep, cart.view, sizeof keep);
++        cart_put14(cart.view + CART_MIN, 8192 - 64); cart_put14(cart.view + CART_MAX, 8192 + 63);
++        for (k = 0; k < 2u; k++) {
++            str_cpy((char *)cart.view + CART_VAL_NAME, k ? "+5" : "-5", 16);
++            memset(cart.delta, 0, sizeof cart.delta); fm1_ms += 1000;
++            for (f = 0; f < 6u; f++) { encs[panel.enc[EN_K4]] = 1; frame(); }
++            turned[k] = cart.delta[3];
++        }
++        check(turned[0] > 6 && turned[1] == turned[0], "a signed value (+5) accelerates as a negative one does");
++        memset(cart.delta, 0, sizeof cart.delta);
++        memcpy(cart.view, keep, sizeof keep);
++    }
++#endif
 +    check(!memcmp(local_params, TSEL->p, sizeof local_params), "cartridge knobs leave Sloop track sound intact");
 +#ifdef CART_REAL_SERVER
 +    /* Browse every engine from the real UI, including all reply labels. */
@@ -2781,7 +3314,7 @@ index 0000000..32defe1
 +        uint32_t w;
 +        check(cart.online && host_chg_en == 0, "link up before the menu checks");
 +        check(mi_sec(MI_CHARGE) == MS_RETURN && mi_row(MI_CHARGE) == 1 && !strcmp(mi_value(MI_CHARGE, &color), "AUTO"),
-+              "CHARGE is the second knob of the USB section, AUTO by default");
++              "CHARGE is the second knob of the USB section, showing AUTO");
 +        check(!strcmp(cart_charge_hint(), "NOW OFF"), "menu hint: the charger is held off now");
 +        ui.menu = 1; ui.menu_sel = MI_CHARGE; ui.force = 1; frame(); ppm("cartridge-menu-charge-auto");
 +        mi_set(MI_CHARGE, 1);
@@ -2805,9 +3338,12 @@ index 0000000..32defe1
 +        cart_charge_boot();
 +        check(cart_keep.boot_en == 1 && !cart_keep.off && host_chg_writes == w, "power-on ignores a stale record");
 +        cart_keep.magic = 0; host_chg_en = 0;         /* the SoC booted with the charger already off */
-+        cart_charge_boot(); cart_service(1);
-+        check(cart.online && !cart_keep.boot_en && host_chg_en == 0 && host_chg_writes == w &&
-+              !strcmp(cart_charge_hint(), "BOOT OFF"), "booted with the charger off: AUTO writes nothing, hint BOOT OFF");
++        cart_charge_on = 1;                             /* (CHARGE as every start sets it) */
++        cart_charge_boot();
++        check(!cart_keep.boot_en && host_chg_en == 0 && host_chg_writes == w, "booted with the charger off: read as off");
++        cart_service(1);
++        check(cart.online && host_chg_en == 1 && cart_keep.boot_en == 1 && !cart_keep.off && !cart_charge_hint()[0] &&
++              host_chg_writes == w + 1u, "booted with the charger off: the start's ON turns it back on");
 +    }
 +    return fails ? 1 : 0;
 +}
@@ -2831,10 +3367,10 @@ index 2b6e9dc..170f8c0 100644
  #include "../firmware/src/arranger.c"
 diff --git a/tests/run_cartridge_tests.sh b/tests/run_cartridge_tests.sh
 new file mode 100755
-index 0000000..75466ca
+index 0000000..61a62c4
 --- /dev/null
 +++ b/tests/run_cartridge_tests.sh
-@@ -0,0 +1,104 @@
+@@ -0,0 +1,111 @@
 +#!/bin/sh
 +# SPDX-License-Identifier: GPL-3.0-only
 +# Focused native tests for USB playback. No device is accessed or flashed.
@@ -2870,6 +3406,12 @@ index 0000000..75466ca
 +    run_logged "$name" "$OUT/$name"
 +}
 +
++# audio.c marks each DAC burst for the return's rate loop (the receiver tests call it as its interrupt does)
++grep -q 'uac_rx_burst();' firmware/src/audio.c || {
++    echo "FAIL: audio.c no longer marks the DAC burst (uac_rx_burst)" >&2
++    exit 1
++}
++
 +for mode in native sanitizer; do
 +    if [ "$mode" = sanitizer ]; then
 +        [ "$SANITIZE" = 1 ] || continue
@@ -2879,6 +3421,7 @@ index 0000000..75466ca
 +    fi
 +    # The receiver gets the complete sanitizer set, without DSP exclusions.
 +    compile_run "receiver-$mode" tests/uac_rx_test.c $opts
++    compile_run "receiver-ramp-$mode" tests/uac_rx_ramp_test.c $opts
 +
 +    # Every combination of playback/capture/CDC is a separate translation unit.
 +    # T_CDC=2 means compiled CDC with the runtime USB SERIAL option off.
@@ -3064,12 +3607,100 @@ index 0000000..b8a95f9
 +    puts("uac_rx mixer: native checks passed (hardware untested)");
 +    return 0;
 +}
+diff --git a/tests/uac_rx_ramp_test.c b/tests/uac_rx_ramp_test.c
+new file mode 100644
+index 0000000..27e31cc
+--- /dev/null
++++ b/tests/uac_rx_ramp_test.c
+@@ -0,0 +1,82 @@
++/* SPDX-License-Identifier: GPL-3.0-only
++ * The receiver's start ramp and gain glide: native simulation, never a hardware audio claim
++ * (tests/uac_rx_test.c checks the exact values with UAR_RAMP 0). */
++#include <assert.h>
++#include <stdint.h>
++#include <stdio.h>
++#include <string.h>
++#define FELUCCA_UAC_RX 1
++#define UAC_RX_BARRIER() __asm__ volatile("" ::: "memory")
++#define UAC_RX_LOCK() 0u
++#define UAC_RX_UNLOCK(s) ((void)(s))
++#include "../firmware/src/uac_rx.c"
++
++static uint8_t packet[180];
++static void samples(uint32_t n, int32_t l, int32_t r)
++{
++    uint32_t i;
++    for (i = 0; i < n; i++) {
++        packet[4*i] = (uint8_t)l; packet[4*i+1] = (uint8_t)((uint32_t)l >> 8);
++        packet[4*i+2] = (uint8_t)r; packet[4*i+3] = (uint8_t)((uint32_t)r >> 8);
++    }
++    uac_rx_push(packet, n * 4);
++}
++static void block(int32_t *l, int32_t *r)
++{
++    memset(l, 0, 32 * sizeof *l); memset(r, 0, 32 * sizeof *r);
++    uac_rx_mix(l, r, 32);
++}
++/* every frame between from and to (inclusive), moving one way, the channels opposite */
++static void glides(const int32_t *l, const int32_t *r, int32_t from, int32_t to)
++{
++    uint32_t i;
++    for (i = 0; i < 32; i++) {
++        assert(r[i] == -l[i]);
++        assert(from <= to ? l[i] >= from && l[i] <= to : l[i] <= from && l[i] >= to);
++        if (i) assert(from <= to ? l[i] >= l[i - 1] : l[i] <= l[i - 1]);
++    }
++}
++int main(void)
++{
++    int32_t l[32], r[32];
++    uint32_t i, b;
++    memset(&uar, 0, sizeof uar);
++    uar_w = uar_r = 0;
++    uac_rx_gain = 128;
++    uac_rx_stream(1);
++    block(l, r);                                     /* the consumer acknowledges the stream */
++    for (i = 0; i < 20; i++) samples(44, 16000, -16000);
++    /* a start fades in over UAR_RAMP blocks, rising frame by frame from silence */
++    block(l, r);
++    assert(l[0] == 0 && l[31] > 0 && l[31] < 16000 / (int32_t)UAR_RAMP);
++    glides(l, r, 0, 16000 / (int32_t)UAR_RAMP);
++    for (b = 1; b < UAR_RAMP; b++) {
++        int32_t from = l[31];
++        block(l, r);
++        glides(l, r, from, 16000 * (int32_t)(b + 1) / (int32_t)UAR_RAMP);
++    }
++    block(l, r);
++    for (i = 0; i < 32; i++) assert(l[i] == 16000 && r[i] == -16000);
++    puts("ramp: a start fades in over 5.8 ms, frame by frame, then plays at its gain");
++    /* USB RETURN changes glide over one block, then hold */
++    uac_rx_gain = 64; block(l, r);
++    glides(l, r, 16000, 8000);
++    assert(l[0] == 16000 && l[31] > 8000);
++    block(l, r);
++    for (i = 0; i < 32; i++) assert(l[i] == 8000);
++    /* the cartridge track's LEVEL (Q12) on top of it */
++    uar_track_q12 = 2048; block(l, r);
++    glides(l, r, 8000, 4000);
++    block(l, r);
++    for (i = 0; i < 32; i++) assert(l[i] == 4000);
++    assert(uar_peak >= 4000 && uar_peak <= 16000);
++    puts("glide: USB RETURN and the track's LEVEL move over one block, no zipper step");
++    /* run dry: an underrun re-primes, and the next start fades in again */
++    for (i = 0; i < 40 && !uar.underruns; i++) block(l, r);
++    assert(uar.underruns == 1 && !uar.go);
++    for (i = 0; i < 20; i++) samples(44, 16000, -16000);
++    block(l, r);
++    assert(l[0] == 0 && l[31] < 4000 / (int32_t)UAR_RAMP + 1);
++    puts("re-prime: the stream fades in again after an underrun");
++    return 0;
++}
 diff --git a/tests/uac_rx_test.c b/tests/uac_rx_test.c
 new file mode 100644
-index 0000000..b751429
+index 0000000..93cb658
 --- /dev/null
 +++ b/tests/uac_rx_test.c
-@@ -0,0 +1,225 @@
+@@ -0,0 +1,299 @@
 +/* SPDX-License-Identifier: GPL-3.0-only
 + * Cartridge receiver tests: native simulation, never a hardware audio claim.
 + * cc -O2 -Wall -Wextra tests/uac_rx_test.c -o build/host/uac_rx_test */
@@ -3083,6 +3714,9 @@ index 0000000..b751429
 +static void test_unlock(uint32_t s) { assert(lock_depth); lock_depth--; test_icfg = s; }
 +static void precommit(void);
 +#define FELUCCA_UAC_RX 1
++#ifndef UAR_RAMP
++#define UAR_RAMP 0u                       /* the exact-value tests: the gain at once (tests/uac_rx_ramp_test.c: the ramp) */
++#endif
 +#define UAC_RX_BARRIER() __asm__ volatile("" ::: "memory")
 +#define UAC_RX_LOCK() test_lock()
 +#define UAC_RX_UNLOCK(s) test_unlock(s)
@@ -3178,6 +3812,7 @@ index 0000000..b751429
 +        while (uar_w - uar_r >= (uar.go ? 300u : UAR_PRIME)) {
 +            memset(l, 0, sizeof l); memset(r, 0, sizeof r); uac_rx_mix(l, r, 32);
 +            for (j = 0; j < 32; j++) {
++                if (!heard && !j) last = (uint32_t)l[0];   /* (a start skips to the rate loop's aim: from there) */
 +                assert(l[j] == r[j] && l[j] >= (int32_t)last && l[j] <= (int32_t)last+3);
 +                last=(uint32_t)l[j]; heard++;
 +            }
@@ -3264,6 +3899,7 @@ index 0000000..b751429
 +            samples(t,16000,-8000); pkt+=1000000ull;
 +        } else if(render<end) {
 +            for(j=0;j<8;j++) {
++                if(!j) uac_rx_burst();              /* the burst begins: the rate loop's turn (audio.c) */
 +                memset(l,0,sizeof l); memset(r,0,sizeof r); uac_rx_mix(l,r,32);
 +                if(uar.go) for(t=0;t<32;t++) assert(l[t]==16000 && r[t]==-8000);
 +            }
@@ -3287,20 +3923,89 @@ index 0000000..b751429
 +    if(ppm>0 && ppm<=1000) assert(uar.correction<0);
 +    if(ppm<0 && ppm>=-1000) assert(uar.correction>0);
 +}
++/* The FM-1's timing around the receiver, closed loop: a DAC burst of eight 32-frame blocks every 256 frames,
++ * rendered in a share of the period that may vary burst to burst (audio.c marks the burst at the interrupt's
++ * entry, each block's mix comes at the end of its render), the host's 1 ms packets at any phase against it
++ * (TIMER5 pushes them between the blocks). Every start must begin on a burst's first block, at the rate
++ * loop's aim. Returns the largest rate
++ * correction in the first 2 s (the start's pitch excursion) and, in *pp, its peak-to-peak range from 5 s
++ * on (the steady wobble); both in cents. */
++#define CENTS(c) ((double)(c) * 1e6 / UAR_ONE / 577.79)    /* (1200 log2(1 + x) for x of a few 1e-4) */
++static double loop_run(uint32_t phase_us, uint32_t share_pct, uint32_t jitter_pct, uint32_t seconds, double *pp)
++{
++    const uint64_t period = 256ull * 1000000000ull / 44100ull, end = (uint64_t)seconds * 1000000000ull;
++    uint64_t pkt = (uint64_t)phase_us * 1000ull, burst, started = 0;
++    uint32_t acc = 0, j, rng = phase_us * 2654435761u + share_pct;
++    int32_t l[32], r[32], cmax = 0, lo = INT32_MAX, hi = INT32_MIN;
++    fresh();
++    for (burst = 0; burst < end; burst += period) {
++        uint64_t render;
++        rng = rng * 1103515245u + 12345u;
++        render = period * (share_pct + (jitter_pct ? (rng >> 16) % (jitter_pct + 1u) : 0u)) / 100u;
++        for (j = 0; j <= 8; j++) {
++            uint64_t at = burst + render * j / 8u;    /* (j = 0: the interrupt's entry) */
++            uint32_t was = uar.go;
++            while (pkt <= at) {
++                uac_rx_tick((uint32_t)(pkt / 1000000ull));
++                acc += 44100; samples(acc / 1000u, 1000, -1000); acc %= 1000u;
++                pkt += 1000000ull;
++            }
++            if (!j) {
++                uac_rx_burst();
++                continue;
++            }
++            memset(l, 0, sizeof l); memset(r, 0, sizeof r); uac_rx_mix(l, r, 32);
++            if (!was && uar.go) {
++                assert(j == 1 && !started && uar_mark - uar_r == UAR_TARGET_FIRST - 32u);
++                started = at;
++            }
++        }
++        if (started && burst - started < 2000000000ull) {
++            if (uar.correction > cmax) cmax = uar.correction;
++            if (-uar.correction > cmax) cmax = -uar.correction;
++        } else if (started && burst - started >= 5000000000ull) {
++            if (uar.correction < lo) lo = uar.correction;
++            if (uar.correction > hi) hi = uar.correction;
++        }
++    }
++    assert(started && !uar.underruns && !uar.overruns);
++    if (pp) *pp = CENTS(hi - lo);
++    return CENTS(cmax);
++}
++static void test_start_phases(void)
++{
++    static const uint32_t share[] = {10, 30, 50, 80};
++    double worst = 0, pp = 0, e;
++    uint32_t k, s;
++    for (s = 0; s < 4u; s++) {
++        double w = 0;
++        for (k = 0; k < 24u; k++) {
++            e = loop_run(k * 242u, share[s], 0, 3, 0);
++            if (e > w) w = e;
++        }
++        printf("closed loop, render %u%% of the period: start excursion at most %.2f cent\n", share[s], w);
++        if (w > worst) worst = w;
++    }
++    e = loop_run(0, 14, 51, 20, &pp);                 /* the render 0.8 .. 3.8 ms a burst */
++    printf("closed loop: start on a burst's first block at every packet phase and render share, pitch excursion "
++           "at most %.2f cent; render 0.8-3.8 ms: start %.2f cent, steady wobble %.2f cent peak to peak\n", worst, e, pp);
++    assert(worst < 1.2 && e < 0.5 && pp < 0.3);
++}
 +int main(void)
 +{
 +    test_packets(); test_wrap_order(); test_lifecycle(); test_gain_bounds();
 +    test_drift(-1000,120); test_drift(0,120); test_drift(1000,120);
 +    test_drift(-10000,20); test_drift(10000,20);
++    test_start_phases();
 +    puts("uac_rx: all native receiver tests passed (hardware untested)");
 +    return 0;
 +}
 diff --git a/tests/uac_rx_ui_test.c b/tests/uac_rx_ui_test.c
 new file mode 100644
-index 0000000..ddcacd7
+index 0000000..8cd7e97
 --- /dev/null
 +++ b/tests/uac_rx_ui_test.c
-@@ -0,0 +1,57 @@
+@@ -0,0 +1,63 @@
 +/* SPDX-License-Identifier: GPL-3.0-only */
 +/* The real menu and panel input, including the playback-only build's item map. */
 +#include <stdint.h>
@@ -3350,11 +4055,17 @@ index 0000000..ddcacd7
 +    encs[panel.enc[EN_K1]] = -1;
 +    frame();
 +    check(uac_rx_gain < 128 && ui.menu_sig != sig, "knob changes return and redraws without reopening menu");
-+    mi_set(MI_RETURN, 0);
-+    check(uac_rx_gain == 0, "OCT+ mutes the return");
-+    ui.force = 1; frame(); ppm("cartridge-usb-muted");
-+    mi_set(MI_RETURN, 0);
-+    check(uac_rx_gain == 128, "OCT+ restores unity");
++    {
++        uint8_t level = uac_rx_gain;
++        mi_set(MI_RETURN, 0);
++        check(uac_rx_gain == 0, "OCT+ mutes the return");
++        ui.force = 1; frame(); ppm("cartridge-usb-muted");
++        mi_set(MI_RETURN, 0);
++        check(uac_rx_gain == level && level < 128, "OCT+ restores the level it muted");
++        for (i = 0; i < 150; i++) mi_set(MI_RETURN, 1);
++        mi_set(MI_RETURN, 0); mi_set(MI_RETURN, 0);
++        check(uac_rx_gain == 128, "OCT+ restores unity after unity");
++    }
 +    check(lights_word() == saved, "return gain does not change the saved settings word");
 +    return fails ? 1 : 0;
 +}
@@ -3657,3 +4368,164 @@ index 9297331..32eb38e 100644
                   "FELUCCA_ICONS", "FELUCCA_SLICE", "FELUCCA_CPU1", "FELUCCA_LOGO_TEXT"):
          v = os.environ.get(flag)    # unset: the default in firmware/src/felucca.c
          if v in ("0", "1"):
+diff --git a/tools/fm1_sample_upload.py b/tools/fm1_sample_upload.py
+index 08a1c5d..86cbb50 100644
+--- a/tools/fm1_sample_upload.py
++++ b/tools/fm1_sample_upload.py
+@@ -22,7 +22,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
+ import sampleio as sio  # noqa: E402
+ 
+ HDR = [0x7D, 0x46, 0x4C]
+-RC = {1: "size", 2: "header", 3: "data CRC", 4: "flash", 5: "zones"}
++RC = {1: "size", 2: "header", 3: "data CRC", 4: "flash", 5: "zones", 6: "no SMP_BEGIN", 7: "the song plays"}
++PLAYS = "the song plays: stop the FM-1 (PLAY) first"   # SMP_BEGIN / SMP_ERASE rc 3, SMP_WRITE rc 5, SMP_END rc 7
+ 
+ 
+ def pack7(b):
+@@ -118,17 +119,19 @@ def main():
+             i = j + 2
+         return
+     if cmd == "erase":
+-        print("erase:", "ok" if link.req(14, [slot], 10)[1] == 0 else "FAILED")
++        rc = link.req(14, [slot], 10)[1]
++        print("erase:", "ok" if rc == 0 else PLAYS if rc == 3 else f"FAILED ({rc})")
+         return
+     print(f"USR{slot + 1} {sys.argv[3]}: {len(data)} B ADPCM, {hdr[6]} zones")
+-    if link.req(11, [slot])[1]:
+-        sys.exit("begin failed")
++    rc = link.req(11, [slot])[1]
++    if rc:
++        sys.exit(f"begin: {PLAYS}" if rc == 3 else f"begin failed ({rc})")
+     t0 = time.time()
+     for off in range(0, len(data), 256):
+         a = sio.SLOT_DATA_OFF + off
+         r = link.req(12, [slot, a & 0x7F, (a >> 7) & 0x7F, (a >> 14) & 0x7F] + pack7(data[off:off + 256]))
+         if r[4]:
+-            sys.exit(f"write at {a:#x} failed ({r[4]})")
++            sys.exit(f"\nwrite at {a:#x}: {PLAYS}" if r[4] == 5 else f"\nwrite at {a:#x} failed ({r[4]})")
+         print(f"\r  {min(off + 256, len(data))} / {len(data)}", end="", flush=True)
+     r = link.req(13, [slot] + pack7(hdr), 5)
+     print(f"\n  {time.time() - t0:.1f} s, end:", "ok" if r[1] == 0 else f"FAILED ({r[1]}, {RC.get(r[1], '?')})")
+diff --git a/web/EDITOR_PROTOCOL.md b/web/EDITOR_PROTOCOL.md
+index d4da9f2..0f1e990 100644
+--- a/web/EDITOR_PROTOCOL.md
++++ b/web/EDITOR_PROTOCOL.md
+@@ -62,10 +62,10 @@ The local Studio build may append status `1` to a PROJECT reply when playback
+ prevents a load/save. No operation occurred; stop playback and try again.
+ An absent status byte retains the original reply format.
+ | 10 NAMES | engine | engine, count, count preset-name strings, then the two edit-page titles |
+-| 11 SMP_BEGIN | slot 0..2 | slot, rc (0 ok). Erases the slot's header sector: the slot is empty from now on |
+-| 12 SMP_WRITE | slot, offset (3 × 7 bit, LSB first), pack7 data (≤ 256 bytes) | slot, offset, rc: 0 ok, 1 arguments, 2 erase, 3 write, 4 slot in use (send SMP_BEGIN first). Offset ≥ 512 and a multiple of 256; writes go in increasing order (a write at a 4 KiB boundary erases that sector) |
+-| 13 SMP_END | slot, pack7 header (480 bytes) | slot, rc: 0 ok, 1 size, 2 header, 3 data CRC, 4 flash, 5 zones |
+-| 14 SMP_ERASE | slot | slot, rc (erases the whole slot, ~1 s) |
++| 11 SMP_BEGIN | slot 0..3 | slot, rc: 0 ok, 1 erase, 3 the song plays. Erases the slot's header sector: the slot is empty from now on |
++| 12 SMP_WRITE | slot, offset (3 × 7 bit, LSB first), pack7 data (≤ 256 bytes) | slot, offset, rc: 0 ok, 1 arguments, 2 erase, 3 write, 4 slot in use (send SMP_BEGIN first), 5 the song plays. Offset ≥ 512 and a multiple of 256; writes go in increasing order (a write at a 4 KiB boundary erases that sector) |
++| 13 SMP_END | slot, pack7 header (480 bytes) | slot, rc: 0 ok, 1 size, 2 header, 3 data CRC, 4 flash, 5 zones, 6 no SMP_BEGIN first, 7 the song plays |
++| 14 SMP_ERASE | slot | slot, rc: 0 ok, 1 erase, 3 the song plays (erases the whole slot, ~1 s) |
+ | 15 SMP_INFO | — | slots, slot KiB, then per slot: zone count (0 = empty), name string, data KiB |
+ | 16 UP_LIST | start, count (1..16) | start, count, total slots, then per slot: used (0/1), engine, name string ("" if unused) |
+ | 17 UP_GET | slot | slot, used, engine, name, P_COUNT × v14, 16 × (note, flags) |
+@@ -484,5 +484,6 @@ before 2.7 does not answer `LIVE`: the page keeps its mixer and keys (TRACK_MIX,
+   work while the computer records.
+ - **Safety.** Only `PROJECT` save, the sample-slot commands and `UP_PUT` / `UP_STORE` / `UP_ERASE` write flash, and only in
+   Felucca's own storage; never the app or the update area. Since SLOOP 2.4 every one of them, and
+-  `BK_PUT` of a preset bank, answers rc 3 while the song plays (as the panel refuses to save then): a
+-  flash erase silences the audio for about 50 ms.
++  `BK_PUT` of a preset bank, answers rc 3 while the song plays (as the panel refuses to save then;
++  the sample slots' SMP_WRITE answers rc 5 and SMP_END rc 7, whose rc 3 means a write or CRC
++  failure): a flash erase silences the audio for about 50 ms.
+diff --git a/web/editor.html b/web/editor.html
+index ad9b46b..6141003 100644
+--- a/web/editor.html
++++ b/web/editor.html
+@@ -2505,20 +2505,20 @@ async function backupRestore(rq, file, progress = () => {}) {
+     const d = m.get(id), k = id - 32;
+     if (!d.length) {
+       const e = parse[CMD.SMP_ERASE](await rq(req.smpErase(k), { timeout: 2500, retries: 0 }));
+-      if (e.rc) throw new BackupError("bkWrite", `erase USR${k + 1} rc ${e.rc}`);
++      if (e.rc) throw new BackupError(e.rc === 3 ? "bkStop" : "bkWrite", `erase USR${k + 1} rc ${e.rc}`);
+       continue;
+     }
+     let r = parse[CMD.SMP_BEGIN](await rq(req.smpBegin(k), { timeout: 1000, retries: 0 }));
+-    if (r.rc) throw new BackupError("bkWrite", `USR${k + 1} begin rc ${r.rc}`);
++    if (r.rc) throw new BackupError(r.rc === 3 ? "bkStop" : "bkWrite", `USR${k + 1} begin rc ${r.rc}`);
+     const data = d.subarray(SMP.DATA_OFF);
+     for (let off = 0; off < data.length; off += 256) {
+       const w = parse[CMD.SMP_WRITE](await rq(req.smpWrite(k, SMP.DATA_OFF + off, data.subarray(off, off + 256)), { timeout: 1000, retries: 1 }));
+-      if (w.rc) throw new BackupError("bkWrite", `USR${k + 1} write rc ${w.rc}`);
++      if (w.rc) throw new BackupError(w.rc === 5 ? "bkStop" : "bkWrite", `USR${k + 1} write rc ${w.rc}`);
+       done += Math.min(256, data.length - off);
+       progress(done, total);
+     }
+     r = parse[CMD.SMP_END](await rq(req.smpEnd(k, d.subarray(0, SMP.HDR_LEN)), { timeout: 2000, retries: 0 }));
+-    if (r.rc) throw new BackupError("bkWrite", `USR${k + 1} end rc ${r.rc}`);
++    if (r.rc) throw new BackupError(r.rc === 7 ? "bkStop" : "bkWrite", `USR${k + 1} end rc ${r.rc}`);
+   }
+   return true;
+ }
+@@ -4718,6 +4718,7 @@ const TEXT = {
+     chopHint: "スペース: 再生中に TAP（停止中は再生/停止）· 1–9 0: 試聴 · ダブルクリック: 追加 · ドラッグ: 移動 · ← →: 微調整 · K: 使う/外す · 下のつまみ: 長さ · Del: 削除 · ホイール: ズーム",
+     smpTooBig: "大きすぎます", smpDecodeFail: "読み込めません: ", smpUploading: "書き込み中 USR", smpDone: "書き込みました USR",
+     smpFail: "サンプルの書き込みに失敗しました: ", smpErased: "消去しました USR",
++    smpStop: "FM-1 の再生を止めてから、もう一度お試しください。",
+     confirmErase: "USR{n} を消去しますか？", confirmUpload: "USR{n} に書き込みますか？ 今の内容は消えます。",
+     layout: "（ファームウェアのパラメーター数が想定と違うため、簡易表示にしています）",
+     ctlHelp: "スライダーはクリックしてからホイールか矢印キーで微調整（Shift で 10 ずつ）、ダブルクリックで初期値。",
+@@ -5055,6 +5056,7 @@ const TEXT = {
+     chopHint: "space: TAP while it plays (play/stop when stopped) · 1–9 0: listen · double-click: add · drag: move · ← →: nudge · K: keep / leave out · bottom handle: length · Del: remove · wheel: zoom",
+     smpTooBig: "too large", smpDecodeFail: "Cannot read: ", smpUploading: "Uploading USR", smpDone: "Uploaded USR",
+     smpFail: "Sample upload failed: ", smpErased: "Erased USR",
++    smpStop: "stop the FM-1 (PLAY), then try again.",
+     confirmErase: "Erase USR{n}?", confirmUpload: "Write to USR{n}? Its current contents will be replaced.",
+     layout: "(The firmware has a different parameter count; showing a plain list.)",
+     ctlHelp: "Sliders: click, then fine-tune with the wheel or arrow keys (Shift: steps of 10); double-click resets.",
+@@ -7672,7 +7674,10 @@ $("clearseq").addEventListener("click", async () => {
+ /* ---------------------------------------------------------- samples --- */
+ const smpDraft = [0, 1, 2, 3].map(() => ({ name: "", files: [] }));   /* USR1..USR4 */
+ let smpBusy = false;
+-const SMP_RC = { 1: "size", 2: "header", 3: "data CRC", 4: "flash", 5: "zones" };
++const SMP_RC = { 1: "size", 2: "header", 3: "data CRC", 4: "flash", 5: "zones", 6: "no SMP_BEGIN" };
++/* the sample commands refuse to write flash while the song plays: SMP_BEGIN / SMP_ERASE rc 3, SMP_WRITE rc 5,
++ * SMP_END rc 7 (EDITOR_PROTOCOL.md) */
++const smpErr = (what, rc, plays) => new Error(rc === plays ? t("smpStop") : `${what} rc ${rc}`);
+ const kib = (n) => (n / 1024).toFixed(1);
+ 
+ /* auto key split, as in buildSlot (for the preview) */
+@@ -8229,7 +8234,7 @@ async function kitSend() {
+     const k = ks[j];
+     if (!parts[j].length) {
+       busy++;
+-      try { const r = parse[CMD.SMP_ERASE](await rq(req.smpErase(k), { timeout: 2500, retries: 0 })); if (r.rc) throw new Error("erase rc " + r.rc); await smpInfo(); }
++      try { const r = parse[CMD.SMP_ERASE](await rq(req.smpErase(k), { timeout: 2500, retries: 0 })); if (r.rc) throw smpErr("erase", r.rc, 3); await smpInfo(); }
+       catch (e) { done = false; report(e); } finally { busy--; }
+       continue;
+     }
+@@ -8278,16 +8283,16 @@ async function smpUpload(k, prog, ask = true, d = smpDraft[k]) {   /* (d: the DR
+   try {
+     const t0 = performance.now();
+     let r = parse[CMD.SMP_BEGIN](await rq(req.smpBegin(k), { timeout: 1000, retries: 0 }));
+-    if (r.rc) throw new Error("begin rc " + r.rc);
++    if (r.rc) throw smpErr("begin", r.rc, 3);
+     for (let off = 0; off < data.length; off += 256) {
+       const a = SMP.DATA_OFF + off;
+       const w = parse[CMD.SMP_WRITE](await rq(req.smpWrite(k, a, data.subarray(off, off + 256)), { timeout: 1000, retries: 1 }));
+-      if (w.rc) throw new Error(`write at 0x${a.toString(16)} rc ${w.rc}`);
++      if (w.rc) throw smpErr(`write at 0x${a.toString(16)}`, w.rc, 5);
+       prog.value = (off + 256) / data.length;
+       sayK("smpUploading", `${k + 1}  ${kib(Math.min(data.length, off + 256))} / ${kib(data.length)} KiB`);
+     }
+     r = parse[CMD.SMP_END](await rq(req.smpEnd(k, hdr), { timeout: 2000, retries: 0 }));
+-    if (r.rc) throw new Error(`end rc ${r.rc} (${SMP_RC[r.rc] || "?"})`);
++    if (r.rc) throw r.rc === 7 ? smpErr("end", 7, 7) : new Error(`end rc ${r.rc} (${SMP_RC[r.rc] || "?"})`);
+     sayK("smpDone", `${k + 1}  ${((performance.now() - t0) / 1000).toFixed(1)} s`);
+     done = true;
+   } catch (e) {
+@@ -8309,7 +8314,7 @@ async function smpErase(k) {
+   renderSamples();
+   try {
+     const r = parse[CMD.SMP_ERASE](await rq(req.smpErase(k), { timeout: 2500, retries: 0 }));
+-    if (r.rc) throw new Error("erase rc " + r.rc);
++    if (r.rc) throw smpErr("erase", r.rc, 3);
+     sayK("smpErased", String(k + 1));
+   } catch (e) {
+     if (e.message !== "closed") sayK("smpFail", e.message);

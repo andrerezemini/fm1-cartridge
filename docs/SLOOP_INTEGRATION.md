@@ -44,28 +44,32 @@ The cartridge frames follow `firmware/src/cartridge_wire.h`, byte-identical to
 ## Clocks, concurrency and mixer
 
 Sloop's own receiver uses a ring of 1,024 stereo frames (4,096 bytes), an occupancy
-target of 384 frames measured per block of 32, and a start at 512. The DAC consumes
-256 frames per burst, so the minimum after a burst stays near 5 ms and a late packet
-does not become an underrun. TIMER5 is the PCM producer; the core 0 render is the
+target of 384 frames on average over a burst, read once per burst at its first block (where it
+aims at 496), and a start at 512 that skips to that aim. The DAC consumes 256 frames per burst,
+so the minimum after a burst stays near 5 ms and a late packet does not become an underrun. The
+rate it learns survives a re-prime. TIMER5 is the PCM producer; the core 0 render is the
 consumer. The urgent service continues during the nested render. DMA uses a barrier
 before reading; separate cursors and reset generations prevent old audio after interruptions.
 
 The ASRC uses 4-point Hermite interpolation, an occupancy-based PI loop and a Q24 phase,
 with the smoothed correction limited to ±5,000 ppm. Linear interpolation would let the slowly
-sweeping fraction modulate the treble by up to 2.4 dB at 10 kHz; with Hermite the modulation
-stays below 0.5 dB. The reference receiver in `core/audio_return.c` is separate: it is not
+sweeping fraction modulate the treble by up to 2.4 dB at 10 kHz; with Hermite the modulation is
+0.5 dB at 9 kHz, 0.7 dB at 10 kHz and 3.5 dB at 15 kHz (computed for the interpolator, not
+measured). The reference receiver in `core/audio_return.c` is separate: it is not
 used inside the FM-1 ISR. Musical quality and the ASRC's cost on the target are not yet measured.
 
 The return enters once on core 0, after summing the cores, before texture,
 global effects, master and limiter. It does not feed per-track sends.
-**HOME → USB → USB RETURN** sets OFF–100% with knob 1; OCT+ toggles mute/100%.
-**CHARGE** (knob 2) holds the FM-1's internal charger off while the cartridge answers (AUTO) or
-leaves it as the boot set it (ON).
+**HOME → USB → USB RETURN** sets OFF–100% with knob 1; OCT+ mutes and brings back the level it
+had. The cartridge track's LEVEL and MUTE scale the return too. Every start and re-prime fades in
+over 5.8 ms, and gain changes glide over a block.
+**CHARGE** (knob 2) leaves the FM-1's internal charger as the boot set it (ON, the default) or
+holds it off while the cartridge answers (AUTO).
 The gain stays in RAM, without changing the format of saved projects and settings.
 Mute keeps draining the ring.
 
-Alt0, reset, deconfiguration, suspend, transport error, invalid packets,
-overflow and a 20 ms timeout lead to discard/reprime. Diagnostics include
+Alt0, reset, deconfiguration, suspend, invalid packets, overflow and a 20 ms timeout lead to
+discard/reprime; a lost or corrupted ISO packet is only counted. Diagnostics include
 under/overrun, occupancy, correction and resets; there is no logging in the USB callback.
 The diagnostic build shows receiver counters in the CARTRIDGE footer
 ([diagnostic build](CARTRIDGE.md#diagnostic-build)).
@@ -74,16 +78,17 @@ The diagnostic build shows receiver counters in the CARTRIDGE footer
 
 Upstream and the cartridge profile build with the same toolchain. Upstream 2.7.1 leaves
 3,644 B free in the app image; the cartridge profile disables USB capture and the CDC console
-to make room for the receiver. It uses 579,952 of 581,564 bytes of the app image, with **1,612 B
-free**. Main RAM: 60,844 B; low RAM: 22,772 B; pool: 333,900 B,
+to make room for the receiver. It uses 581,096 of 581,564 bytes of the app image, with **468 B
+free**. Main RAM: 60,892 B; low RAM: 22,772 B; pool: 333,900 B,
 preserving 10,164 B free (minimum of 8,192 B). The package
 is built at `build/felucca.fwsc` in `sloop-fm1/`.
 
 `sh tests/run_cartridge_tests.sh` passes natively and with ASan/UBSan, including
 ±1,000 ppm drift for 120 s, reset during render, the real mix with two cores,
-gain/mute, the menu and the CARTRIDGE page. With the return disabled or at zero gain the output
-matches the upstream reference bit for bit. `tools/test_sloop_cartridge.sh` runs Sloop's UI
-against the real ESP32 server (101 checks, native and sanitized). These results are not
+gain/mute, the start ramp and gain glide, the menu, the CARTRIDGE page and the cartridge track.
+With the return disabled or at zero gain the output matches the upstream reference bit for bit.
+`tools/test_sloop_cartridge.sh` runs Sloop's UI against the real ESP32 server (native and
+sanitized). These results are not
 equivalent to physically reproduced audio.
 
 The open bench work follows gates G0 to G6: the power and VBUS path, then **computer → Sloop**

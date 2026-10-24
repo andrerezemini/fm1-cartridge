@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
@@ -16,11 +17,23 @@
 
 static const char *TAG = "usb_midi";
 
+/* A transfer error on a device that stays attached (a STALL, three transaction errors, a babble)
+ * closes the MIDI interface; nothing re-enumerates it, so the client opens the same address again,
+ * up to REOPEN_TRIES times with a doubling delay, and clears the endpoints' halts first so the
+ * FM-1's data toggles start again with the host's. */
+#define REOPEN_TRIES 5u
+#define REOPEN_FIRST_US 250000
+
 typedef struct {
     usb_host_client_handle_t client;
     usb_device_handle_t device;
-    usb_transfer_t *transfer, *tx;
-    bool tx_in_flight;
+    usb_transfer_t *transfer, *tx, *control;
+    bool tx_in_flight, control_in_flight;
+    uint8_t address;             /* the device opened: reopened after a transfer error */
+    uint8_t retries;             /* reopens since the last good IN transfer */
+    bool gone;                   /* DEV_GONE: never reopened */
+    uint8_t clear_step;          /* after a reopen: 1 clear the IN halt, 2 the OUT halt, 0 done */
+    int64_t reopen_at;
     uint32_t session;
     fm1_sysex_t sysex;
     fm1_usb_endpoints_t endpoints;
@@ -43,7 +56,9 @@ bool fm1_usb_midi_reply(const uint8_t frame[CART_REPLY_SIZE], uint32_t session)
     if (!reply_queue || !cart_valid(frame, CART_REPLY_SIZE)) return false;
     reply_t item = {.session = session};
     memcpy(item.frame, frame, sizeof item.frame);
-    return xQueueSend(reply_queue, &item, 0) == pdTRUE;
+    if (xQueueSend(reply_queue, &item, 0) != pdTRUE) return false;
+    usb_host_client_unblock(host.client);       /* the client task sends it now, not at its next 10 ms poll */
+    return true;
 }
 static void tx_complete(usb_transfer_t *transfer);
 
@@ -65,6 +80,8 @@ static void client_event(const usb_host_client_event_msg_t *message, void *arg)
     case USB_HOST_CLIENT_EVENT_NEW_DEV:
         if (!state->device || state->closing) {
             state->pending_address = message->new_dev.address;
+            state->retries = 0;
+            state->reopen_at = 0;
         } else {
             ESP_LOGW(TAG, "Ignoring additional USB device; bench supports one device directly");
         }
@@ -72,6 +89,7 @@ static void client_event(const usb_host_client_event_msg_t *message, void *arg)
     case USB_HOST_CLIENT_EVENT_DEV_GONE:
         if (message->dev_gone.dev_hdl == state->device) {
             ESP_LOGI(TAG, "FM-1 disconnected; draining transfers before releasing device");
+            state->gone = true;
             request_close(state);
         }
         break;
@@ -88,10 +106,11 @@ static void transfer_complete(usb_transfer_t *transfer)
         return;
     }
     if (transfer->status != USB_TRANSFER_STATUS_COMPLETED) {
-        ESP_LOGW(TAG, "MIDI transfer status=%d; reconnect device to retry", transfer->status);
+        ESP_LOGW(TAG, "MIDI transfer status=%d; closing the interface to open it again", transfer->status);
         request_close(state);
         return;
     }
+    state->retries = 0;
     /* A USB-MIDI event packet is atomic and always four bytes. Do not join a
      * truncated tail to the next transfer, which would corrupt framing. */
     int length = transfer->actual_num_bytes;
@@ -102,9 +121,10 @@ static void transfer_complete(usb_transfer_t *transfer)
     }
     for (int offset = 0; offset < length; offset += 4) {
         const uint8_t *packet = transfer->data_buffer + offset;
+        uint8_t request[CART_REQUEST_SIZE];
         if (fm1_sysex_packet(&state->sysex, packet) && state->callbacks.request &&
-            state->sysex.length == CART_REQUEST_SIZE && cart_valid(state->sysex.bytes, CART_REQUEST_SIZE))
-            state->callbacks.request(state->sysex.bytes, state->session, state->callbacks.context);
+            cart_request_of(state->sysex.bytes, state->sysex.length, request))
+            state->callbacks.request(request, state->session, state->callbacks.context);
         fm1_midi_event_t event;
         if (fm1_midi_decode(transfer->data_buffer + offset, &event) && state->callbacks.event) {
             state->callbacks.event(&event, state->callbacks.context);
@@ -119,6 +139,31 @@ static void tx_complete(usb_transfer_t *transfer)
     midi_host_t *state = transfer->context;
     state->tx_in_flight = false;
     if (!state->closing && transfer->status != USB_TRANSFER_STATUS_COMPLETED) request_close(state);
+}
+
+static void control_complete(usb_transfer_t *transfer)
+{
+    midi_host_t *state = transfer->context;
+    state->control_in_flight = false;
+    if (transfer->status != USB_TRANSFER_STATUS_COMPLETED)
+        ESP_LOGW(TAG, "CLEAR_FEATURE(ENDPOINT_HALT) status=%d", transfer->status);
+    if (state->clear_step) state->clear_step = state->clear_step == 1 && state->tx ? 2 : 0;
+}
+
+/* a standard CLEAR_FEATURE(ENDPOINT_HALT) on ep: the device resets its data toggle */
+static esp_err_t clear_halt(midi_host_t *state, uint8_t ep)
+{
+    usb_setup_packet_t *setup = (usb_setup_packet_t *)state->control->data_buffer;
+    setup->bmRequestType = USB_BM_REQUEST_TYPE_DIR_OUT | USB_BM_REQUEST_TYPE_TYPE_STANDARD |
+                           USB_BM_REQUEST_TYPE_RECIP_ENDPOINT;
+    setup->bRequest = USB_B_REQUEST_CLEAR_FEATURE;
+    setup->wValue = 0;                                   /* ENDPOINT_HALT */
+    setup->wIndex = ep;
+    setup->wLength = 0;
+    state->control->num_bytes = sizeof(usb_setup_packet_t);
+    esp_err_t error = usb_host_transfer_submit_control(state->client, state->control);
+    if (error == ESP_OK) state->control_in_flight = true;
+    return error;
 }
 
 static void close_device(midi_host_t *state)
@@ -138,7 +183,7 @@ static void close_device(midi_host_t *state)
             ESP_LOGD(TAG, "Cancel halt=%s flush=%s", esp_err_to_name(halted), esp_err_to_name(flushed));
         }
     }
-    if (state->in_flight || state->tx_in_flight) {
+    if (state->in_flight || state->tx_in_flight || state->control_in_flight) {
         return;
     }
     if (state->claimed) {
@@ -159,6 +204,11 @@ static void close_device(midi_host_t *state)
         ESP_ERROR_CHECK(usb_host_transfer_free(state->tx));
         state->tx = NULL;
     }
+    if (state->control) {
+        ESP_ERROR_CHECK(usb_host_transfer_free(state->control));
+        state->control = NULL;
+    }
+    state->clear_step = 0;
     memset(&state->sysex, 0, sizeof state->sysex);
     if (state->device) {
         esp_err_t error = usb_host_device_close(state->client, state->device);
@@ -171,19 +221,38 @@ static void close_device(midi_host_t *state)
     memset(&state->endpoints, 0, sizeof(state->endpoints));
     state->closing = false;
     state->cancel_started = false;
-    ESP_LOGI(TAG, "Waiting for USB MIDI device");
+    if (!state->gone && state->address && !state->pending_address && state->retries < REOPEN_TRIES) {
+        state->reopen_at = esp_timer_get_time() + ((int64_t)REOPEN_FIRST_US << state->retries);
+        state->retries++;
+        ESP_LOGI(TAG, "Opening address %u again in %d ms", state->address,
+                 (int)(((int64_t)REOPEN_FIRST_US << (state->retries - 1)) / 1000));
+    } else {
+        state->address = 0;
+        state->reopen_at = 0;
+        ESP_LOGI(TAG, "Waiting for USB MIDI device");
+    }
+    state->gone = false;
 }
 
 static void open_device(midi_host_t *state)
 {
     uint8_t address = state->pending_address;
+    bool again = address == state->address && state->retries;
     state->pending_address = 0;
     ++state->session;
     esp_err_t error = usb_host_device_open(state->client, address, &state->device);
     if (error != ESP_OK) {
         ESP_LOGW(TAG, "Open address %u failed: %s", address, esp_err_to_name(error));
+        state->device = NULL;
+        if (again && state->retries < REOPEN_TRIES) {
+            state->reopen_at = esp_timer_get_time() + ((int64_t)REOPEN_FIRST_US << state->retries);
+            state->retries++;
+        } else {
+            state->address = 0;
+        }
         return;
     }
+    state->address = address;
     const usb_device_desc_t *device_desc;
     const usb_config_desc_t *config_desc;
     error = usb_host_get_device_descriptor(state->device, &device_desc);
@@ -199,6 +268,7 @@ static void open_device(midi_host_t *state)
     if (!fm1_usb_find_endpoints((const uint8_t *)config_desc, config_desc->wTotalLength,
                                &state->endpoints)) {
         ESP_LOGW(TAG, "Malformed configuration descriptor; rejected");
+        state->address = 0;                              /* (not a transient error: never opened again) */
         request_close(state);
         return;
     }
@@ -218,6 +288,7 @@ static void open_device(midi_host_t *state)
         state->endpoints.midi_max_packet == 0 || state->endpoints.midi_max_packet > 64 ||
         state->endpoints.midi_max_packet % 4 != 0) {
         ESP_LOGW(TAG, "No supported USB-MIDI 1.0 bulk IN at alternate setting 0");
+        state->address = 0;
         request_close(state);
         return;
     }
@@ -244,7 +315,16 @@ static void open_device(midi_host_t *state)
         state->tx->callback = tx_complete;
         state->tx->context = state;
     }
-    ESP_LOGI(TAG, "MIDI ready: interface=%u alt=%u bulk IN=0x%02x mps=%u",
+    if (again) {
+        error = usb_host_transfer_alloc(sizeof(usb_setup_packet_t), 0, &state->control);
+        if (error != ESP_OK) goto failed;
+        state->control->device_handle = state->device;
+        state->control->bEndpointAddress = 0;
+        state->control->callback = control_complete;
+        state->control->context = state;
+        state->clear_step = 1;                           /* before the first IN transfer (client_task) */
+    }
+    ESP_LOGI(TAG, "MIDI ready%s: interface=%u alt=%u bulk IN=0x%02x mps=%u", again ? " again" : "",
              state->endpoints.midi_interface, state->endpoints.midi_alt,
              state->endpoints.midi_ep, state->endpoints.midi_max_packet);
     return;
@@ -265,8 +345,20 @@ static void client_task(void *arg)
         if (state->closing) {
             close_device(state);
         }
+        if (!state->device && !state->pending_address && state->address && state->reopen_at &&
+            esp_timer_get_time() >= state->reopen_at) {
+            state->reopen_at = 0;
+            state->pending_address = state->address;     /* the same device, still attached */
+        }
         if (!state->device && state->pending_address) {
             open_device(state);
+        }
+        if (state->clear_step && !state->control_in_flight && !state->closing) {
+            error = clear_halt(state, state->clear_step == 1 ? state->endpoints.midi_ep : state->endpoints.midi_out_ep);
+            if (error != ESP_OK) {
+                ESP_LOGW(TAG, "CLEAR_FEATURE submit failed: %s", esp_err_to_name(error));
+                state->clear_step = 0;
+            }
         }
         if (!state->tx_in_flight) {
             reply_t reply;
@@ -280,12 +372,12 @@ static void client_task(void *arg)
                 break;
             }
         }
-        if (state->transfer && !state->in_flight && !state->closing) {
+        if (state->transfer && !state->in_flight && !state->closing && !state->clear_step) {
             error = usb_host_transfer_submit(state->transfer);
             if (error == ESP_OK) {
                 state->in_flight = true;
             } else {
-                ESP_LOGW(TAG, "Submit failed: %s; reconnect device to retry", esp_err_to_name(error));
+                ESP_LOGW(TAG, "Submit failed: %s; closing the interface to open it again", esp_err_to_name(error));
                 request_close(state);
             }
         }

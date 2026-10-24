@@ -1,8 +1,10 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #include "slots.h"
 #include <ctype.h>
+#include <stdbool.h>
 #include <string.h>
 #include "esp_app_desc.h"
+#include "esp_image_format.h"
 #include "esp_log.h"
 #include "esp_ota_ops.h"
 #include "esp_partition.h"
@@ -20,25 +22,37 @@ static const char *name(uint8_t s) { return s < slot_count ? slots[s].name : "?"
 static int bootable(uint8_t s) { return s < slot_count && slots[s].valid; }
 static const fm1_slots_t api = { count, current, name, bootable };
 
-static void describe(slot_t *s)
+/* The name the FM-1 shows for a slot (FIRMWARE): the firmware's own, EMPTY, DAMAGED (an image that does not
+ * verify: never offered), or "<NAME> FAIL" for the slot the bootloader last rolled back from (it booted and
+ * never answered the FM-1; picking it again tries once more). */
+static void describe(slot_t *s, bool running, const esp_partition_t *rolled_back)
 {
     esp_app_desc_t desc;
     s->valid = 0;
     strcpy(s->name, "EMPTY");
     if (esp_ota_get_partition_description(s->part, &desc) != ESP_OK) return;
+    if (!running) {                                      /* (the running one has just been verified by the boot) */
+        const esp_partition_pos_t pos = { .offset = s->part->address, .size = s->part->size };
+        esp_image_metadata_t data;
+        if (esp_image_verify(ESP_IMAGE_VERIFY_SILENT, &pos, &data) != ESP_OK) {
+            strcpy(s->name, "DAMAGED");
+            return;
+        }
+    }
     /* the profile's CONFIG_APP_PROJECT_VER names the firmware (CLIPPER, MELODEE, FELUCCA, TONE, MIDI) */
     const char *src = desc.version[0] ? desc.version : desc.project_name;
-    size_t n = 0;
-    for (size_t i = 0; src[i] && n + 1 < sizeof s->name; ++i)
+    size_t n = 0, keep = rolled_back == s->part ? sizeof s->name - 6u : sizeof s->name - 1u;
+    for (size_t i = 0; src[i] && n < keep; ++i)
         if (src[i] > 32 && src[i] < 127) s->name[n++] = (char)toupper((unsigned char)src[i]);
     s->name[n] = 0;
     if (!n) strcpy(s->name, "APP");
+    if (rolled_back == s->part) strcat(s->name, " FAIL");
     s->valid = 1;
 }
 
 void fm1_slots_init(void)
 {
-    const esp_partition_t *running = esp_ota_get_running_partition();
+    const esp_partition_t *running = esp_ota_get_running_partition(), *rolled_back = esp_ota_get_last_invalid_partition();
     slot_count = 0;
     /* factory first (none in partitions.csv), then ota_0.. in subtype order */
     for (int sub = ESP_PARTITION_SUBTYPE_APP_FACTORY; sub <= ESP_PARTITION_SUBTYPE_APP_OTA_MAX && slot_count < CART_SLOTS_MAX; ++sub) {
@@ -46,9 +60,10 @@ void fm1_slots_init(void)
         const esp_partition_t *p = esp_partition_find_first(ESP_PARTITION_TYPE_APP, (esp_partition_subtype_t)sub, NULL);
         if (!p) continue;
         slot_t *s = &slots[slot_count];
+        bool here = running && p->address == running->address;
         s->part = p;
-        describe(s);
-        if (running && p->address == running->address) slot_running = slot_count;
+        describe(s, here, here ? NULL : rolled_back);
+        if (here) slot_running = slot_count;
         slot_count++;
     }
     esp_ota_img_states_t state = ESP_OTA_IMG_UNDEFINED;
@@ -56,6 +71,8 @@ void fm1_slots_init(void)
     for (uint8_t i = 0; i < slot_count; ++i)
         ESP_LOGI(TAG, "slot %u %-8s @0x%06" PRIx32 " %s%s", i, slots[i].part->label, slots[i].part->address,
                  slots[i].name, i == slot_running ? (state == ESP_OTA_IMG_PENDING_VERIFY ? " (running, pending verify)" : " (running)") : "");
+    if (rolled_back && rolled_back != running)
+        ESP_LOGW(TAG, "%s did not answer the FM-1 after its last boot: the bootloader returned here", rolled_back->label);
 }
 
 const fm1_slots_t *fm1_slots(void) { return slot_count > 1 ? &api : NULL; }
@@ -69,7 +86,8 @@ void fm1_slots_confirm(void)
     esp_ota_img_states_t state;
     if (running && esp_ota_get_state_partition(running, &state) == ESP_OK && state == ESP_OTA_IMG_PENDING_VERIFY) {
         esp_err_t err = esp_ota_mark_app_valid_cancel_rollback();
-        ESP_LOGI(TAG, "FM-1 answered: slot %u confirmed to the bootloader (%s)", slot_running, esp_err_to_name(err));
+        ESP_LOGI(TAG, "this firmware answered the FM-1: slot %u confirmed to the bootloader (%s)", slot_running,
+                 esp_err_to_name(err));
     }
 }
 

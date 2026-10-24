@@ -5,6 +5,7 @@
 #endif
 #include FM1_TEST_SYNTH_HEADER
 #include "cartridge_remote.h"
+#include "cartridge_state.h"
 #include "fm1/cartridge_protocol.h"
 #include <assert.h>
 #include <stdio.h>
@@ -46,6 +47,18 @@ static uint8_t fake_current_slot(void) { return fake_current; }
 static const char *fake_name(uint8_t s) { return s == 0 ? "CLIPPER" : s == 1 ? "MELODEE" : "EMPTY"; }
 static int fake_bootable(uint8_t s) { return s < 2; }
 static const fm1_slots_t fake_slots = { fake_count, fake_current_slot, fake_name, fake_bootable };
+/* the same with the empty slot in the middle: a turn passes over it to the slot after it */
+static const char *gap_name(uint8_t s) { return s == 0 ? "CLIPPER" : s == 1 ? "EMPTY" : "FELUCCA"; }
+static int gap_bootable(uint8_t s) { return s != 1; }
+static const fm1_slots_t gap_slots = { fake_count, fake_current_slot, gap_name, gap_bootable };
+/* the catalogue entry with this name, or -1 */
+static int entry_named(const char *name)
+{
+    fm1_param_t d;
+    for (unsigned i = 0; !cartridge_remote_param_get(&server, i, &d); ++i)
+        if (!strcmp(d.name, name)) return (int)i;
+    return -1;
+}
 int main(void)
 {
     const fm1_synth_api_t *synth = FM1_TEST_SYNTH_API();
@@ -161,7 +174,167 @@ int main(void)
     assert(!cartridge_remote_param_get(&server, 2, &before));
     if (before.value < before.max) { command(CART_VALUE, 1); assert(!synth->param_get(1, &d) && d.value == before.value + 1); }
     assert(cartridge_remote_param_set(&server, 1, 3) == -1 && cartridge_remote_param_set(&server, 1, -1) == -1);
-    printf("cartridge server: %u presets, %u parameter ranges, idempotence, stale guard, SysEx, PCM and FIRMWARE slots passed\n",
+
+    /* While the FM-1 plays (busy), FIRMWARE stays on the running slot and says why. */
+    server.slot_dirty = 0;
+    command(CART_PARAM, -1); assert(cart_u14(p + CART_PAR) == 1);
+    server.busy = 1;
+    command(CART_QUERY, 0);                       /* (a query moves off FIRMWARE: back to it) */
+    assert(cart_u14(p + CART_PAR) == 2);
+    command(CART_PARAM, -1);
+    assert(!strcmp((const char *)p + CART_UNIT, "PLAYING"));
+    assert(command_status(CART_VALUE, 1) == CART_BAD_REQUEST && server.slot_cursor == 0 && !server.slot_dirty);
+    server.busy = 0;
+    command(CART_VALUE, 1); assert(server.slot_cursor == 1 && server.slot_dirty);
+    server.slot_dirty = 0;
+    /* leaving FIRMWARE cancels the switch it armed */
+    command(CART_PARAM, 1);
+    assert(cart_u14(p + CART_PAR) == 2 && server.slot_cursor == 0 && server.slot_dirty);
+    server.slot_dirty = 0;
+    /* a query (the page opening) never rests on FIRMWARE, nor keeps a switch armed */
+    command(CART_PARAM, -1); command(CART_VALUE, 1); assert(server.slot_cursor == 1);
+    command(CART_QUERY, 0);
+    assert(cart_u14(p + CART_PAR) == 2 && server.slot_cursor == 0 && !strcmp((const char *)p + CART_UNIT, ""));
+
+    /* A sound change keeps the entry when its name stays (an engine's presets share a catalogue) and
+     * otherwise goes to the synth's first entry: never MIDI CH or FIRMWARE, which knob 4 would act on. */
+    {
+        fm1_param_t was, now;
+        unsigned k;
+        command(CART_PARAM, 4); k = cart_u14(p + CART_PAR); assert(k == 6);
+        assert(!cartridge_remote_param_get(&server, k, &was));
+        server.changed = 0;
+        command(CART_PRESET, 1);
+        assert(server.changed);
+        assert(!cartridge_remote_param_get(&server, k, &now));
+        assert(cart_u14(p + CART_PAR) == (strcmp(was.name, now.name) ? 2u : k));
+        command(CART_ENGINE, 1);
+        assert(cart_u14(p + CART_PAR) >= 2u);
+        command(CART_PARAM, -8192); assert(cart_u14(p + CART_PAR) == 0);
+        command(CART_PRESET, 1);                  /* MIDI CH chosen on purpose: it stays */
+        assert(cart_u14(p + CART_PAR) == 0);
+        command(CART_PARAM, 1);
+        command(CART_PRESET, 1);                  /* from FIRMWARE: to the synth's first entry */
+        assert(cart_u14(p + CART_PAR) == 2);
+    }
+
+    /* MIDI CH turned while a note sounds: the cartridge lets go of it (its note-off comes on the old
+     * channel, which the synth now ignores), and the new channel plays. */
+    {
+        static int16_t pcm[8192 * 2];
+        uint64_t power;
+        assert(!synth->set_midi_channel(1) && synth->set_preset(0, 0) == 0);
+        command(CART_PARAM, -8192); assert(cart_u14(p + CART_PAR) == 0);
+        assert(synth->midi(0x90, 60, 100) == 0);
+        synth->render(pcm, 8192);
+        power = 0; for (unsigned i = 0; i < 16384; ++i) power += (int64_t)pcm[i] * pcm[i];
+        assert(power > 100000);
+        server.changed = 0;
+        command(CART_VALUE, 1); assert(synth->midi_channel() == 2 && p[CART_MIDI_CH] == 2 && server.changed);
+        assert(synth->midi(0x80, 60, 0) == 0);    /* the old channel's note-off: filtered out */
+        for (unsigned j = 0; j < 16; ++j) synth->render(pcm, 8192);
+        power = 0; for (unsigned i = 0; i < 16384; ++i) power += (int64_t)pcm[i] * pcm[i];
+        assert(power < 16384 * 16);
+        assert(synth->midi(0x91, 64, 100) == 0);
+        synth->render(pcm, 8192);
+        power = 0; for (unsigned i = 0; i < 16384; ++i) power += (int64_t)pcm[i] * pcm[i];
+        assert(power > 100000);
+        synth->panic();
+    }
+    /* The platform's figures: two read-only entries at the end of the catalogue; a query starts them
+     * again before it answers. */
+    {
+        cartridge_metrics_t metrics = { 812, 1451, 3 };
+        unsigned last;
+        server.metrics = &metrics;
+        last = cartridge_remote_param_count(&server) - 1u;
+        assert(last == own + 2u);
+        command(CART_QUERY, 0); assert(!metrics.render_us && !metrics.underruns);
+        metrics.render_us = 812; metrics.underruns = 3;
+        command(CART_PARAM, 8191);
+        assert(cart_u14(p + CART_PAR) == last && !strcmp((const char *)p + CART_PAR_NAME, "AUDIO UNDERRUNS") &&
+               !strcmp((const char *)p + CART_VAL_NAME, "3"));
+        command(CART_QUERY, 0);                    /* the page opened again on the figures: from 0 */
+        assert(cart_u14(p + CART_PAR) == last && !strcmp((const char *)p + CART_VAL_NAME, "0"));
+        metrics.render_us = 812; metrics.underruns = 3;
+        command(CART_PARAM, -1);
+        assert(!strcmp((const char *)p + CART_PAR_NAME, "AUDIO RENDER MAX") && !strcmp((const char *)p + CART_VAL_NAME, "812 US") &&
+               !strcmp((const char *)p + CART_UNIT, "/1451"));
+        assert(command_status(CART_VALUE, 1) == CART_BAD_REQUEST && cartridge_remote_param_set(&server, last, 0) == -1);
+        server.metrics = NULL;
+        command(CART_PARAM, -8192);
+    }
+    /* A value it refuses is passed over in the knob's direction: an empty slot between two firmwares. */
+    cartridge_remote_init(&server, synth, &gap_slots, 7);
+    command(CART_QUERY, 0); command(CART_PARAM, -8192); command(CART_PARAM, 1);
+    assert(cart_u14(p + CART_PAR) == 1);
+    command(CART_VALUE, 1);
+    assert(server.slot_cursor == 2 && !strcmp((const char *)p + CART_VAL_NAME, "FELUCCA"));
+    command(CART_VALUE, -1);
+    assert(server.slot_cursor == 0);
+    cartridge_remote_init(&server, synth, &fake_slots, 99);
+    /* Felucca's SAMPLE SET and SLICE SRC never land on the user slots, which the port cannot fill */
+    if (!strcmp(synth->name, "FELUCCA")) {
+        unsigned sample = 0, slice = 0;
+        for (unsigned e = 0; e < synth->engine_count(); ++e) {
+            if (!strcmp(synth->engine_name(e), "SAMPLE")) sample = e;
+            if (!strcmp(synth->engine_name(e), "SLICE")) slice = e;
+        }
+        assert(sample && slice);
+        assert(synth->set_preset(sample, 0) == 0);
+        command(CART_QUERY, 0);
+        int set = entry_named("ENG SET");
+        assert(set > 0);
+        command(CART_PARAM, -8192); command(CART_PARAM, set);
+        for (unsigned k = 0; k < 20; ++k) {
+            command_status(CART_VALUE, 1);
+            assert(strncmp((const char *)p + CART_VAL_NAME, "USR", 3));
+        }
+        assert(synth->set_preset(slice, 0) == 0);
+        command(CART_QUERY, 0);
+        int src = entry_named("ENG SRC");
+        assert(src > 0);
+        command(CART_PARAM, -8192); command(CART_PARAM, src);
+        command_status(CART_VALUE, -8192);
+        assert(!strcmp((const char *)p + CART_VAL_NAME, "BREAK"));
+        command(CART_VALUE, 1);
+        assert(!strcmp((const char *)p + CART_VAL_NAME, "PIANO"));
+        command(CART_VALUE, -1);
+        assert(!strcmp((const char *)p + CART_VAL_NAME, "BREAK"));
+        printf("felucca: SAMPLE SET and SLICE SRC pass over the empty user slots\n");
+    }
+
+    /* The state record: a sound with edits and a MIDI channel comes back after a fresh start, and a
+     * record from elsewhere (another synth or revision, short, malformed) changes nothing. */
+    {
+        static cartridge_state_t a, b, c;
+        size_t na, nb, nc;
+        unsigned e = synth->engine_count() > 1 ? 1u : 0u, pr = synth->preset_count(e) > 2 ? 2u : 0u;
+        assert(synth->init(44100) == 0 && synth->set_preset(e, pr) == 0 && !synth->set_midi_channel(3));
+        for (unsigned i = 1, edited = 0; i < synth->param_count() && edited < 6; ++i) {
+            fm1_param_t d;
+            assert(!synth->param_get(i, &d));
+            if (d.value < d.max && !strstr(d.name, "TYPE")) { assert(!synth->param_set(i, d.value + 1)); edited++; }
+        }
+        na = cartridge_state_capture(synth, &a);
+        assert(na > 16 && a.engine == e && a.preset == pr && a.midi_channel == 3);
+        assert(synth->init(44100) == 0 && !synth->set_midi_channel(1));
+        nb = cartridge_state_capture(synth, &b);
+        assert(!cartridge_state_equal(&a, na, &b, nb));
+        assert(cartridge_state_apply(synth, &a, na) == 0);
+        nc = cartridge_state_capture(synth, &c);
+        assert(cartridge_state_equal(&a, na, &c, nc) && synth->midi_channel() == 3);
+        assert(cartridge_state_apply(synth, &a, na - 1) == -1);
+        b = a; b.revision ^= 1u; assert(cartridge_state_apply(synth, &b, na) == -1);
+        b = a; b.magic = 0; assert(cartridge_state_apply(synth, &b, na) == -1);
+        b = a; b.engine = (uint16_t)synth->engine_count(); assert(cartridge_state_apply(synth, &b, na) == -1);
+        b = a; b.midi_channel = 17; assert(cartridge_state_apply(synth, &b, na) == -1);
+        assert(synth->init(44100) == 0);
+        nb = cartridge_state_capture(synth, &b);
+        assert(cartridge_state_apply(synth, &a, 3) == -1 && cartridge_state_capture(synth, &c) == nb &&
+               cartridge_state_equal(&b, nb, &c, nb));
+    }
+    printf("cartridge server: %u presets, %u parameter ranges, idempotence, stale guard, SysEx, PCM, FIRMWARE slots, the busy guard, the kept entry, the MIDI CH release and the state record passed\n",
            presets, parameters);
     return 0;
 }

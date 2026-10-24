@@ -3,6 +3,7 @@
 #include <assert.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 static int16_t audio[8192 * 2], reference[8192 * 2];
@@ -39,6 +40,8 @@ int main(void)
         assert(clipper_synth_midi(0x95, 60, 110) == 0); /* Synth mode is omni. */
         clipper_synth_render(audio, 8192);
         uint64_t power = energy(audio, 16384);
+        clipper_synth_render(audio, 8192);       /* (WAVE: silent while its table builds) */
+        if (energy(audio, 16384) > power) power = energy(audio, 16384);
         printf("engine %2u %-10s %-12s energy=%llu\n", e,
             clipper_synth_engine_name(e), clipper_synth_preset_name(e, 0),
             (unsigned long long)power);
@@ -114,6 +117,46 @@ int main(void)
     assert(clipper_synth_midi(0xB0, 120, 0) == 0);
     clipper_synth_render(audio, 8192);
     assert(energy(audio, 16384) == 0);
-    puts("clipper: 23 upstream engines, release, chunking, panic and recovery passed");
+    /* WAVE's tables, built in bounded steps per block, equal upstream's copies for every factory table,
+     * and are ready within half a second of audio. */
+    for (uint32_t k = 0; k < 16; ++k) {
+        int blocks = clipper_synth_wavetable_check(k);
+        assert(blocks > 0 && blocks * 32 < 44100 / 2);
+        if (!k) printf("WAVE table build: %d blocks (%d ms of audio)\n", blocks, blocks * 32 * 1000 / 44100);
+    }
+    /* A WAVE note whose table changes under it is silent while the new table builds, then comes back
+     * through the part's fade-in, not as a step from silence to its level. */
+    {
+        uint32_t wave = 0, tabl = 0, b, i;
+        clipper_param_t d;
+        int silent = 0, step = 0, blocks = 0;
+        int16_t last;
+        for (uint32_t e = 0; e < clipper_synth_engine_count(); ++e)
+            if (!strcmp(clipper_synth_engine_name(e), "WAVE")) wave = e;
+        assert(wave && clipper_synth_init(44100) == 0 && clipper_synth_set_preset(wave, 0) == 0);
+        for (i = 0; i < clipper_synth_param_count(); ++i)
+            if (!clipper_synth_param_get(i, &d) && !strcmp(d.name, "ENG TABL")) tabl = i;
+        assert(tabl);
+        assert(clipper_synth_midi(0x90, 60, 100) == 0);
+        for (b = 0; b < 400; ++b) clipper_synth_render(audio, 32);    /* the table built, the note held */
+        assert(energy(audio, 64) > 64u * 100000u);
+        assert(!clipper_synth_param_get(tabl, &d) && !clipper_synth_param_set(tabl, d.value + 1));
+        last = audio[62];
+        for (b = 0; b < 400 && blocks < 2; ++b) {          /* (silent: no sample moves by more than 1) */
+            int jump = 0;
+            clipper_synth_render(audio, 32);
+            for (i = 0; i < 64; i += 2) {
+                if (abs(audio[i] - last) > jump) jump = abs(audio[i] - last);
+                last = audio[i];
+            }
+            if (!silent)
+                silent = jump <= 1;
+            else if (jump > 1 && ++blocks && jump > step)
+                step = jump;
+        }
+        printf("WAVE table change: back after %u blocks, largest step %d as it comes in\n", b, step);
+        assert(silent && blocks == 2 && step < 400);
+    }
+    puts("clipper: 23 upstream engines, release, chunking, panic, recovery and the WAVE table build passed");
     return 0;
 }

@@ -1,0 +1,51 @@
+name: release
+# A tag v* publishes ready-to-flash ESP32 images (the three synthesizers in their slots, bootloader,
+# partition table and a clean otadata in one file) for the Super Mini (4 MB flash, 2 MB quad PSRAM)
+# and for 8 MB / octal PSRAM boards. Sloop's package needs the JieLi toolchain and is built locally.
+on:
+  push:
+    tags: ['v*']
+jobs:
+  esp32:
+    runs-on: ubuntu-latest
+    container: espressif/idf:v5.3.6
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and merge the slot images
+        shell: bash
+        run: |
+          . /opt/esp/idf/export.sh
+          mkdir -p dist
+          for board in 4m2m 8m; do
+            suffix=$([ "$board" = 4m2m ] && echo -4m2m || true)
+            for synth in clipper melodee felucca; do ./firmware/build.sh "$synth$suffix"; done
+            first=firmware/build-clipper$suffix
+            args=$(python3 -c 'import json,sys; print(" ".join(json.load(open(sys.argv[1]))["write_flash_args"]))' "$first/flasher_args.json")
+            esptool.py --chip esp32s3 merge_bin -o "dist/fm1-cartridge-esp32s3-$board.bin" $args \
+              0x0 "$first/bootloader/bootloader.bin" 0x8000 "$first/partition_table/partition-table.bin" \
+              0xd000 "$first/ota_data_initial.bin" \
+              0x10000 "$first/fm1_cartridge.bin" \
+              0x150000 "firmware/build-melodee$suffix/fm1_cartridge.bin" \
+              0x290000 "firmware/build-felucca$suffix/fm1_cartridge.bin"
+          done
+          (cd dist && sha256sum *.bin > SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: esp32-images
+          path: dist/
+  publish:
+    needs: esp32
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: esp32-images
+          path: dist
+      - name: Attach the images to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" \
+            --notes "ESP32-S3 images: Clipper, Melodee and Felucca in slots ota_0..ota_2. Flash with esptool.py write_flash 0x0 <file> (docs/FLASHING.md)."

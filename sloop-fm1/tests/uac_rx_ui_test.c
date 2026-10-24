@@ -47,11 +47,17 @@ int main(int argc, char **argv)
     encs[panel.enc[EN_K1]] = -1;
     frame();
     check(uac_rx_gain < 128 && ui.menu_sig != sig, "knob changes return and redraws without reopening menu");
-    mi_set(MI_RETURN, 0);
-    check(uac_rx_gain == 0, "OCT+ mutes the return");
-    ui.force = 1; frame(); ppm("cartridge-usb-muted");
-    mi_set(MI_RETURN, 0);
-    check(uac_rx_gain == 128, "OCT+ restores unity");
+    {
+        uint8_t level = uac_rx_gain;
+        mi_set(MI_RETURN, 0);
+        check(uac_rx_gain == 0, "OCT+ mutes the return");
+        ui.force = 1; frame(); ppm("cartridge-usb-muted");
+        mi_set(MI_RETURN, 0);
+        check(uac_rx_gain == level && level < 128, "OCT+ restores the level it muted");
+        for (i = 0; i < 150; i++) mi_set(MI_RETURN, 1);
+        mi_set(MI_RETURN, 0); mi_set(MI_RETURN, 0);
+        check(uac_rx_gain == 128, "OCT+ restores unity after unity");
+    }
     check(lights_word() == saved, "return gain does not change the saved settings word");
     return fails ? 1 : 0;
 }

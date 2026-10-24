@@ -174,13 +174,36 @@ static void cart_note(const track_t *t, uint32_t note, uint32_t vel)
     ct_set[i][note >> 5] |= bit;
     midi_out_note(ct_ch[i], note, vel & 127u);
 }
+/* nothing sounds on the cartridge (project.c audio_quiet: autosave waits, its flash erase would cut the return): no
+ * note of a cartridge track on, and the USB return quiet for a second (a release tail, notes from elsewhere) */
+static int cart_quiet(void)
+{
+    uint32_t p;
+    for (p = 0; p < NPART; p++)
+        if (ct_set[p][0] | ct_set[p][1] | ct_set[p][2] | ct_set[p][3])
+            return 0;
+    return fm1_ms - uar_loud_ms >= 1000u;
+}
 /* at a block start (events_block, before any note): a track the cartridge takes falls silent at once (no voice, no
- * tail; what MIDI OUT = SEQ had sent for it ends), a track it gives back ends the notes it had sent, and so does a
- * cartridge track muted (MUTE, another track soloed), as its own engine would fall silent */
+ * tail; what MIDI OUT = SEQ had sent for it ends, and an All Notes Off on its channel ends the keys' plain notes, which
+ * the cartridge may be playing: held keys, KBD HOLD, as they were before the link came up), a track it gives back ends
+ * the notes it had sent, and so does a cartridge track muted (MUTE, another track soloed), as its own engine would
+ * fall silent */
 static uint8_t ct_seen;
 static void cart_tracks_block(void)
 {
     uint32_t now = cart_tracks, k, i, taken = now & ~(uint32_t)ct_seen, given = (uint32_t)ct_seen & ~now;
+    uint32_t q = now ? 0u : 4096u, pk = uar_peak;
+    midi_out_lost_flush();
+    uar_peak = 0;
+    for (k = 0; k < NPART; k++)                         /* the USB return plays at the cartridge track's LEVEL (its */
+        if ((now >> k) & 1u) {                          /* default: unity) and MUTE; its meter shows the return */
+            uint32_t g = trk_silent(&trk[k]) ? 0u
+                       : (uint32_t)LEVEL_Q12[trk[k].p[P_LEVEL] & 127] * 4096u / LEVEL_Q12[TP[P_LEVEL].def];
+            if (g > q) q = g;
+            if ((int32_t)pk > trk[k].peak) trk[k].peak = (int32_t)pk;
+        }
+    uar_track_q12 = q;
     for (k = 0; k < NPART; k++)
         if (((now >> k) & 1u) && trk_silent(&trk[k]))
             cart_notes_off(&trk[k]);
@@ -196,6 +219,8 @@ static void cart_tracks_block(void)
             t->xp_n = 0;
             t->peak = 0;
             seq_out_track_off(t);
+            if (trk_midi_ch(k) <= 15u)
+                midi_out_event(0x0Bu | (0xB0u | trk_midi_ch(k)) << 8 | 123u << 16);
         }
         if ((given >> k) & 1u)
             cart_notes_off(t);
@@ -2868,12 +2893,24 @@ static uint32_t mclk_adv(uint32_t n)               /* units to advance this bloc
  * stopped too (the other gear knows the tempo before PLAY); START as the sequencer starts (after a count-in: when it
  * starts), with the pulse of its downbeat; STOP when it stops (CLK OUT or SYNC changed while playing: STOP too). Only
  * while SYNC is INT: a FM-1 that follows a clock never sends one back (no loop through a computer). A pulse goes out
- * in the block it falls in: < 1 ms late */
+ * in the block it falls in: < 1 ms late. A cartridge: the clock while it answers, CLK OUT or not; one that comes up
+ * (or CLK OUT turned on) while the song plays gets START on the next bar line, so its step 0 is a downbeat */
 static uint32_t mco_u;                            /* units since the last pulse */
 static uint8_t mco_play;                          /* the other gear was told START */
+#if FELUCCA_CARTRIDGE
+static uint8_t mco_link;                          /* the cartridge answering, as last seen: one that comes up is told
+                                                   * START (on a bar line, as the song plays: its downbeat ours) */
+#endif
 static void clkout_block(uint32_t n)
 {
+    uint32_t adv = n * (uint32_t)song.g[G_BPM], into = 0;
+#if FELUCCA_CARTRIDGE
+    if (mco_link != cart.online)
+        mco_link = cart.online, mco_play = 0;
+    if ((!song.g[G_CLKOUT] && !cart.online) || song.g[G_SYNC]) {   /* (a cartridge answering: its tempo is ours) */
+#else
     if (!song.g[G_CLKOUT] || song.g[G_SYNC]) {
+#endif
         if (mco_play)
             midi_out_event(0x0Fu | 0xFCu << 8);       /* STOP */
         mco_play = 0;
@@ -2881,14 +2918,22 @@ static void clkout_block(uint32_t n)
         return;
     }
     if (song.playing && !mco_play) {
-        midi_out_event(0x0Fu | 0xFAu << 8);           /* START, then the downbeat's pulse */
-        midi_out_event(0x0Fu | 0xF8u << 8);
-        mco_u = 0;
+#if FELUCCA_CARTRIDGE
+        into = clk_pos ? BEAT_U - clk_pos : 0u;      /* the next beat line, units into this block (PLAY: 0) */
+        if (into >= adv || (clk_beat + (clk_pos != 0u)) % 4u)
+            into = adv;                               /* (mid-song: START waits for a bar line) */
+#endif
+        if (into < adv) {
+            midi_out_event(0x0Fu | 0xFAu << 8);       /* START, then the downbeat's pulse */
+            midi_out_event(0x0Fu | 0xF8u << 8);
+            mco_u = 0u - into;
+            mco_play = 1;
+        }
     } else if (!song.playing && mco_play) {
         midi_out_event(0x0Fu | 0xFCu << 8);           /* STOP */
+        mco_play = 0;
     }
-    mco_play = (uint8_t)(song.playing != 0);
-    mco_u += n * (uint32_t)song.g[G_BPM];
+    mco_u += adv;
     while (mco_u >= MCLK_PULSE_U) {
         mco_u -= MCLK_PULSE_U;
         midi_out_event(0x0Fu | 0xF8u << 8);           /* a pulse */
@@ -3025,7 +3070,7 @@ static void events_block(uint32_t n)
         track_t *t = &trk[i];
         if ((pr >> i) & 1u) {
             kh_release(t);                            /* (2.7) KBD HOLD: what it held ends */
-            if (t->pold) {                            /* (2.6) a preset loaded: the notes keep sounding as they are
+            if (t->pold && !CART_TRACK(t)) {          /* (a cartridge track has no voice to fade: its notes end) */                            /* (2.6) a preset loaded: the notes keep sounding as they are
                                                        * and fade out with the old sound (voice.c sound_change):
                                                        * no release cut short (an organ's key-off) under the fade */
                 strum_cancel(t, 0, 1);

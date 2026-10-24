@@ -1,7 +1,8 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-3.0-only
 # Compile the real Sloop UI/USB client against this repo's real Clipper server.
-# No device access. The Sloop clone must have its generated headers (build first).
+# No device access. The Sloop tree must have its generated headers (build-cartridge.sh, or the
+# generators alone: CI). The server's libraries are (re)built here from the current sources.
 set -eu
 cd "$(dirname "$0")/.."
 root=$PWD
@@ -11,9 +12,13 @@ opts='-O1 -g'
 if [ "$mode" = sanitizer ]; then
     opts="$opts -fsanitize=address,undefined -fno-sanitize-recover=all -fno-sanitize=shift-base,signed-integer-overflow"
     build="$root/out/native-san"
+    sanitize=ON
 else
     build="$root/out/native"
+    sanitize=OFF
 fi
+cmake -S "$root" -B "$build" -DCMAKE_BUILD_TYPE=Release -DFM1_SANITIZE=$sanitize >/dev/null
+cmake --build "$build" --target clipper_synth fm1_protocol >/dev/null
 mkdir -p "$root/out/cartridge-tests"
 cmp "$root/core/include/fm1/cartridge_wire.h" "$sloop/firmware/src/cartridge_wire.h"
 ${CC:-cc} -std=c11 $opts -Wno-int-to-pointer-cast -Wno-unused-function -DCART_REAL_SERVER=1 \

@@ -9,7 +9,8 @@ connected to each other while flashing.
 Requirements: ESP-IDF 5.3.6 with `esp32s3` support activated (`. "$IDF_PATH/export.sh"`, which
 provides `esptool.py`), and the profiles built (`firmware/build.sh`, see
 [firmware/README.md](../firmware/README.md)). Use the `-4m2m` profiles for a board with 4 MB of
-flash and 2 MB of quad PSRAM (the Super Mini prototype) and the plain profiles for the 8 MB XIAO.
+flash and 2 MB of quad PSRAM (the Super Mini prototype) and the plain profiles for the 8 MB XIAO;
+`flash-slots.sh` refuses to mix them.
 
 1. Disconnect the FM-1. Put the ESP32 in its USB bootloader: hold BOOT, press and release RESET,
    release BOOT. The board appears as a USB Serial/JTAG port (`/dev/cu.usbmodem*` on macOS).
@@ -35,7 +36,8 @@ flash and 2 MB of quad PSRAM (the Super Mini prototype) and the plain profiles f
        ota_0=build-clipper-4m2m ota_1=build-melodee-4m2m ota_2=build-felucca-4m2m
    ```
 
-   esptool verifies the hash of every image after writing it.
+   esptool verifies the hash of every image after writing it, and the board stays in its
+   bootloader.
 5. Read every region back and compare it with the files, while the board is still in its
    bootloader:
 
@@ -52,8 +54,23 @@ flash and 2 MB of quad PSRAM (the Super Mini prototype) and the plain profiles f
    disappears. Logs are on the UART console (TX GPIO43, RX GPIO44, 115,200 baud, 3.3 V logic).
 
 To replace a single slot, name only that slot (`./flash-slots.sh -p PORT ota_1=build-melodee-4m2m`):
-the table and `otadata` stay untouched. Secure Boot, flash encryption and eFuses are never touched
-by these steps. Restoring the backup is `esptool.py ... write_flash 0 esp32-backup.bin`.
+the table and `otadata` stay untouched. Naming `ota_0`, alone or with others, also writes the
+bootloader and the table and erases `otadata`, so the board starts from slot 1 again. Secure Boot,
+flash encryption and eFuses are never touched by these steps. Restoring the backup is
+`esptool.py ... write_flash 0 esp32-backup.bin`.
+
+A tagged release of this repository also carries the three synthesizers ready to flash, with the
+bootloader, the table and a clean `otadata` in one file per board (`fm1-cartridge-esp32s3-4m2m.bin`
+for the Super Mini, `fm1-cartridge-esp32s3-8m.bin`, and `SHA256SUMS`). After the backup of step 3:
+
+```sh
+esptool.py --chip esp32s3 -p /dev/cu.usbmodem101 -b 460800 --before no_reset --after no_reset \
+    write_flash 0x0 fm1-cartridge-esp32s3-4m2m.bin
+```
+
+The merged image fills the gaps between its parts with `0xFF`, so it also clears `nvs`: every
+firmware's kept sound starts again from its defaults. `flash-slots.sh` writes only the bootloader,
+the table, `otadata` and the slots, and keeps them.
 
 ## FM-1: Sloop with the cartridge profile
 

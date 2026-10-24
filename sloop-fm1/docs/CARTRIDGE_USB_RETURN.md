@@ -32,15 +32,18 @@ Use the dedicated profile.
 
 1. In the menu opened by HOME, use SELECT to reach the **USB** section.
 2. **KNOB 1 / USB RETURN** sets the gain from OFF to 100%.
-3. **OCT+** toggles between mute and 100%. The state is RAM-only: restarting restores 100%.
-4. **KNOB 2 / CHARGE** selects **AUTO** or **ON** for the FM-1's internal charger while the
-   cartridge is the host (section below). Also RAM-only.
+3. **OCT+** mutes, and pressed again brings back the level it had. The state is RAM-only:
+   restarting restores 100%.
+4. **KNOB 2 / CHARGE** selects **ON** (the default) or **AUTO** for the FM-1's internal charger
+   while the cartridge is the host (section below). Also RAM-only.
 5. The master, limiter and global effects stay in the audio path.
 
 The return is a single stereo signal, summed once on core 0 after the sum of the cores and
 before the global effects and limiter. It does not create a fifth track, does not change the
 saved project format and does not feed the per-track chorus/delay/reverb sends. Mute keeps
-consuming the packets, so no stale audio builds up while muted.
+consuming the packets, so no stale audio builds up while muted. Every start and re-prime fades in
+over eight blocks (5.8 ms, `UAR_RAMP`), and the gain glides from one block's value to the next
+sample by sample, so USB RETURN, a mute or the cartridge track's LEVEL never steps.
 
 The track on the cartridge's MIDI channel is the cartridge track (`cartridge.c`
 `cart_tracks_update`, `core.h` `CART_TRACK`): the notes its engine would play go out over MIDI on
@@ -48,9 +51,17 @@ its channel (`voice.c`, `seq.c` `cart_note`), from the keys, the arpeggiator, th
 takes, with OUT at KEYS; its engine renders nothing and is left out of the mix (`fx.c`); the
 footer, TRACKS, the studio view and the PRESETS page show the cartridge's engine and preset; and
 PRESETS steps through the cartridge's presets (`cart_browse`). The handover happens at the start
-of an audio block (`seq.c` `cart_tracks_block`): voices stop when the cartridge takes the track,
-and the notes sent are ended when it gives it back or the track is muted. The cartridge's
-polyphony depends on the firmware it runs. Sloop's knobs do not send CC.
+of an audio block (`seq.c` `cart_tracks_block`): voices stop and an All Notes Off goes out on the
+track's channel when the cartridge takes the track (its keys' plain notes may be sounding there),
+and the notes sent are ended when it gives it back or the track is muted. A note-off dropped by a
+full MIDI OUT ring (`usb.c` `midi_out_event`) is followed by an All Notes Off on its channel once
+there is room. The same block sets the return's level from the cartridge track's LEVEL (its default
+is unity) and MUTE, and feeds the track's meter with the return's peak. The cartridge's polyphony
+depends on the firmware it runs. Sloop's knobs do not send CC. While the cartridge answers, CLOCK
+OUT runs even at OFF (`seq.c` `clkout_block`), unless SYNC follows an external clock.
+`cart_quiet` holds the autosave and the section saves, whose flash erase runs with the interrupts
+off, while a cartridge track holds a note and for a second after the return last went above
+-54 dBFS (`uar_loud_ms`).
 
 ### CARTRIDGE page
 
@@ -62,14 +73,16 @@ count, MIDI channel). Knobs 1–4 select engine, preset, parameter and value. Th
 parameter list, **FIRMWARE** (knob 3), lists the slots in the ESP32 flash; knob 4 picks one
 ("2/3" on the right, CURRENT on the running one) and the cartridge reboots into it two
 seconds after the knob stops. The footer explains this while FIRMWARE is selected. Without an
-answer the header shows NO LINK. The protocol is described in the cartridge
-project's `docs/CARTRIDGE.md`.
+answer the header shows NO LINK, and with an answer but the stream at alt 0, "<NAME> NO AUDIO".
+The knobs go through Sloop's knob acceleration (`ui_input.c` `accel`); a value given by name never
+accelerates. On HOME, the cartridge track's footer reads CARTRIDGE. The protocol is described in
+the cartridge project's `docs/CARTRIDGE.md`.
 
 ## FM-1 charger and the charging icon
 
 The charging icon in the Sloop header is animation only: `ui_draw.c` fills the bars whenever a
-configured, non-suspended USB host is present, and never reads the charger state. It does not
-show that the FM-1 battery is charging.
+configured, non-suspended USB host is present, and never reads the charger state. With the
+cartridge answering it shows the battery's level instead: the cartridge powers nothing.
 
 The FM-1 SoC (AC79/WL82) has an internal Li-ion charger controlled by the P33 register
 `P3_CHG_CON0` (bit 0 `CHARGE_EN`, bit 1 `CHGBG_EN`; SDK
@@ -81,24 +94,27 @@ VBUS, this charger would drain the cartridge's cell into the FM-1 battery. The c
   bit 0, using P33's own OR/AND operations (no read-modify-write); the bandgap and the
   voltage/current selections stay as the boot left them. Register access stays inside `hal/`.
 - At startup, before interrupts are enabled, `cart_charge_boot()` (`cartridge.c`) reads the
-  state the boot left the charger in. Sloop otherwise never touches this bit; it is set by the
-  ROM, uboot or the hardware default, and its value is only known on the device.
-- Menu **HOME → USB → KNOB 2 / CHARGE**: **AUTO** (default) holds `CHARGE_EN` at zero while
-  `cart.online` (the ESP32 answers the cartridge protocol); **ON** leaves the charger as it was
-  at boot. RAM-only: restarting returns to AUTO. Below the value, **NOW OFF** means the firmware
-  is holding the charger off; **BOOT OFF** means the SoC started with the charger already off,
-  in which case AUTO writes nothing.
+  state the boot left the charger in: whatever the ROM, uboot, the hardware default or a
+  power-off that kept the P33 domain left, known only on the device.
+- Menu **HOME → USB → KNOB 2 / CHARGE**: **ON** (default) keeps the charger on, so the first
+  main-loop pass of every start sets `CHARGE_EN` when the boot found it off, with or without a
+  cartridge; **AUTO** holds `CHARGE_EN` at zero while `cart.online` (the ESP32 answers the
+  cartridge protocol). RAM-only: restarting returns to ON. Below the value, **NOW OFF** means the
+  firmware is holding the charger off. Sloop writes the bit in these cases only: ON at start,
+  AUTO while linked, and the restores listed below.
 - The charger returns to its boot state when the link drops (protocol timeout, suspend,
   deconfiguration or USB reset), when CHARGE changes to ON, and before entering UBOOT, the OTA
   update and the restart after FELUCCA CRASH.
 - `P3_CHG_CON0` survives a software reset. The boot state and the "turned off by us" flag live
   in `.noinit` RAM (`cart_keep`): after a watchdog reset or a lockup with the link active, the
-  next startup turns the charger back on and keeps the true boot state. At power-on the RAM is
-  random and the record is ignored (magic).
+  next startup turns the charger back on (`main.c fm1_cstart`, before the boot-loop guard sends it
+  to the rescue or to UBOOT) and keeps the true boot state. At power-on the RAM is random and the
+  record is ignored (magic).
 - So that AUTO acts without a visit to the CARTRIDGE page, every USB configuration sends up to 4
-  discovery queries with the page hidden (each with up to 3 attempts; about 5 s in total).
-  Without an answer (a computer, for example) the page stays quiet until it is opened.
-  Connected and idle, there is no periodic traffic.
+  discovery queries with the page hidden (each with up to 3 attempts; about 5 s in total), and
+  every accepted reply gives a later outage 4 more. Without an answer (a computer, for example)
+  the page stays quiet until it is opened. Once the cartridge has answered in this USB session,
+  a query every 5 s with the page hidden checks the link and finds it again after an outage.
 
 Risks and limits: this control has not been tested on the SoC. The bit map comes only from the
 SDK header; the real effect of clearing `CHARGE_EN` (charge current, VBUS detector behaviour,
@@ -107,11 +123,12 @@ What powers the FM-1's VBUS with the cartridge attached is still to be confirmed
 the cartridge project): with no VBUS from the cartridge there is nothing to turn off; with
 VBUS, the firmware shutoff does not replace an electrical review, because there may be current
 paths this bit does not control. If the FM-1 power switch cuts the P33 domain, the state returns
-to the hardware default; if it is a soft power-off, an FM-1 switched off with the cartridge
-connected may keep the charger off until the next Sloop startup. Recovery mode and entering
-UBOOT directly from boot do not restore it; the next normal startup does. The native tests
-(`tests/cartridge_ui_test.c`) exercise the sequence with a simulated HAL: online → off, link
-lost/reset → restored, ON/AUTO menu, restore before reset and recovery after an unclean reset.
+to the hardware default; if it is a soft power-off that also loses `.noinit`, an FM-1 switched off
+with the cartridge connected at AUTO keeps the charger off while it stays off, and the next start
+turns it back on (CHARGE starts at ON). The native tests (`tests/cartridge_ui_test.c`) exercise
+the sequence with a simulated HAL: the ON default turning a charger found off back on, AUTO
+online → off, link lost/reset → restored, ON/AUTO menu, restore before reset, and recovery after
+an unclean reset.
 
 ## Reception and clocks
 
@@ -123,14 +140,25 @@ larger than the advertised format without reading past the buffer.
 The ASRC uses 4-point Hermite interpolation (Catmull-Rom), a Q24 phase and occupancy-based PI
 correction, limited to ±5,000 ppm. Linear interpolation would let the fraction, which sweeps
 slowly from 0 to 1 at the beat rate of the two clocks, modulate the treble by up to 2.4 dB at
-10 kHz (a slow tremolo on bright sounds); with Hermite the modulation stays below 0.5 dB. The
-products are 64-bit, with no overflow on full-scale steps.
+10 kHz (a slow tremolo on bright sounds); with Hermite it is 0.5 dB at 9 kHz, 0.7 dB at 10 kHz and
+3.5 dB at 15 kHz (computed for the interpolator, not measured). The products are 64-bit, with no
+overflow on full-scale steps.
 
-The occupancy target is 384 frames, measured per block of 32; since the DAC consumes 256 frames
+The occupancy target is a mean of 384 frames over a burst; since the DAC consumes 256 frames
 per burst, the minimum after a burst stays near 5 ms, so a late packet from the host does not
-become an underrun. Startup waits for 512 frames. These values are neither a latency
-measurement nor a certification of musical quality; the resampler's cost and quality on the
-device have yet to be measured.
+become an underrun. The rate loop reads the occupancy once per burst, as the burst begins
+(`audio.c` calls `uac_rx_burst()` at the audio interrupt's entry, and the burst's first block
+reads it), where it aims at 496 frames, the start of a sawtooth whose mean is 384: there the
+reading is what came in over a whole DAC period, independent of the render's own length, since
+TIMER5 pushes packets inside the render. A start waits for 512 frames counted the same way, on a
+burst's first block, and then skips to the aim. The rate learned (a slow mean of the correction)
+survives a re-prime and an underrun, so a restart does not glide back to it. The closed-loop
+model in `tests/uac_rx_test.c` (bursts rendered in 10 % to 80 % of their period, the host's packets
+at any phase against them) starts every stream on a burst's first block, at the aim, with a pitch
+excursion of at most 0.95 cent; with the render time varying from 0.8 to 3.8 ms burst to burst,
+the start's excursion is 0.26 cent and the steady wobble 0.15 cent peak to peak. These values come
+from a model: they are neither a latency measurement nor a certification of musical quality, and
+the resampler's cost and quality on the device have yet to be measured.
 
 Alt 0, reset, deconfiguration, suspend, an invalid packet, an overflow and the absence of packets
 for 20 ms discard the pending audio or restart acquisition. A lost ISO packet (OverRun in the

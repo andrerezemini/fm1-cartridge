@@ -57,6 +57,18 @@ menu "FM1 Cartridge"
             DR CH). 1 plays the cartridge from track 1 only; 0 answers every
             channel. Changeable live as the first CARTRIDGE page parameter, MIDI CH.
 
+    config FM1_UAC_BUFFER_BYTES
+        int "UAC: bytes of PCM the render keeps ahead of the URBs"
+        depends on FM1_ENABLE_UAC_TX
+        range 1024 8192
+        default 2048
+        help
+            The ring between the audio task and the isochronous URBs (4 bytes a
+            stereo frame: 2048 B is 11.6 ms). The task blocks when it is full, so
+            it stays nearly full: this is most of the cartridge's own latency.
+            Smaller cuts latency and leaves less room for a slow render pass
+            (render_max_us, pass_max_us and underruns on the UART show it).
+
     config FM1_SLOT_SWITCH_MS
         int "FIRMWARE: ms the knob rests on another slot before rebooting into it"
         range 500 10000
@@ -64,5 +76,8 @@ menu "FM1 Cartridge"
         help
             GLO > CARTRIDGE > parameter FIRMWARE (knob 3), value (knob 4): the
             slot the value rests on for this long is set as the boot partition
-            and the cartridge restarts. Turning back to the running slot cancels.
+            and the cartridge restarts. Turning back to the running slot, moving
+            knob 3 off FIRMWARE or leaving the page (Sloop sends a query) cancels;
+            while the FM-1 holds notes or its transport runs, the value stays on
+            the running slot.
 endmenu

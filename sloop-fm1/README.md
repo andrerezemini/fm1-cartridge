@@ -1,9 +1,10 @@
-> **ESP32 cartridge development branch:** adds optional USB audio playback from
-> Clipper on an ESP32-S3 host. See [cartridge operation](docs/CARTRIDGE_USB_RETURN.md)
-> and [build / validation](docs/CARTRIDGE_BUILD.md). The dedicated profile keeps
-> MIDI and receives stereo 44.1 kHz audio; USB capture and CDC are disabled in
-> that profile. Hardware playback has not been validated. The upstream installer
-> linked below does not install this local branch.
+> **Cartridge profile (`build-cartridge.sh`):** USB audio playback from an ESP32-S3
+> cartridge into the mixer, the GLO → CARTRIDGE page for the cartridge's three firmwares
+> (Clipper, Melodee, Felucca), the cartridge track and HOME → USB → CHARGE. USB capture and
+> CDC are off in that profile. See [cartridge operation](docs/CARTRIDGE_USB_RETURN.md) and
+> [build / validation](docs/CARTRIDGE_BUILD.md); what is observed and what is still unverified
+> on the hardware is in the cartridge project's `docs/ROADMAP.md`. The upstream installer
+> linked below does not install this build.
 
 <p align="center"><img src="assets/logo/sloop-logo.png" alt="SLOOP" width="420"></p>
 

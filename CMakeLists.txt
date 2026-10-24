@@ -13,9 +13,10 @@ target_include_directories(fm1_protocol PUBLIC core/include)
 target_compile_options(fm1_protocol PRIVATE -Wall -Wextra -Werror)
 
 # One library per port: the adapter in one translation unit over its vendored upstream sources
-# (-fwrapv: the fixed-point DSP relies on wraparound) plus the cartridge server they all share.
+# (-fwrapv: the fixed-point DSP relies on wraparound) plus the cartridge server and the state record
+# they all share.
 function(fm1_synth_library name vendor)
-    add_library(${name} synth/${name}.c synth/cartridge_remote.c)
+    add_library(${name} synth/${name}.c synth/cartridge_remote.c synth/cartridge_state.c)
     target_include_directories(${name} PUBLIC synth core/include PRIVATE third_party/${vendor}/generated)
     target_compile_options(${name} PRIVATE -fwrapv -Wno-unused-function -Wno-unused-variable ${ARGN})
     if(FM1_SANITIZE)
@@ -65,3 +66,39 @@ foreach(test_name protocol audio_return clipper)
 endforeach()
 add_test(NAME upstream_integrity COMMAND ${Python3_EXECUTABLE}
     ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_upstream.py)
+# The audio return end to end, ESP32 ring and URBs to Sloop's receiver, with the buffers the firmware's
+# sources set (audio_tx.c, Kconfig.projbuild, sdkconfig.defaults; usb_host_uac's 3 URBs unless overridden);
+# an edit to any of them configures again.
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    ${CMAKE_CURRENT_SOURCE_DIR}/firmware/main/audio_tx.c ${CMAKE_CURRENT_SOURCE_DIR}/firmware/main/Kconfig.projbuild
+    ${CMAKE_CURRENT_SOURCE_DIR}/firmware/sdkconfig.defaults)
+file(READ ${CMAKE_CURRENT_SOURCE_DIR}/firmware/main/audio_tx.c fm1_audio_tx)
+string(REGEX MATCH "#define AUDIO_FRAMES ([0-9]+)u" fm1_match "${fm1_audio_tx}")
+set(fm1_pipe_frames ${CMAKE_MATCH_1})
+file(READ ${CMAKE_CURRENT_SOURCE_DIR}/firmware/main/Kconfig.projbuild fm1_kconfig)
+string(FIND "${fm1_kconfig}" "config FM1_UAC_BUFFER_BYTES" fm1_at)
+if(fm1_at LESS 0)
+    message(FATAL_ERROR "config FM1_UAC_BUFFER_BYTES not found in firmware/main/Kconfig.projbuild")
+endif()
+string(SUBSTRING "${fm1_kconfig}" ${fm1_at} -1 fm1_kconfig)
+string(REGEX MATCH "default ([0-9]+)" fm1_match "${fm1_kconfig}")
+set(fm1_pipe_ring ${CMAKE_MATCH_1})
+file(READ ${CMAKE_CURRENT_SOURCE_DIR}/firmware/sdkconfig.defaults fm1_defaults)
+string(REGEX MATCH "CONFIG_UAC_NUM_PACKETS_PER_URB=([0-9]+)" fm1_match "${fm1_defaults}")
+set(fm1_pipe_packets ${CMAKE_MATCH_1})
+set(fm1_pipe_urbs 3)
+if(fm1_defaults MATCHES "CONFIG_UAC_NUM_ISOC_URBS=([0-9]+)")
+    set(fm1_pipe_urbs ${CMAKE_MATCH_1})
+endif()
+if(NOT fm1_pipe_frames OR NOT fm1_pipe_ring OR NOT fm1_pipe_packets)
+    message(FATAL_ERROR "the audio return's buffer sizes were not found in the firmware sources")
+endif()
+add_executable(test_pipeline tests/test_pipeline.c)
+target_compile_options(test_pipeline PRIVATE -UNDEBUG)
+target_compile_definitions(test_pipeline PRIVATE PIPE_FRAMES=${fm1_pipe_frames}u PIPE_RING_BYTES=${fm1_pipe_ring}u
+    PIPE_URBS=${fm1_pipe_urbs}u PIPE_PACKETS=${fm1_pipe_packets}u)
+add_test(NAME pipeline COMMAND test_pipeline)
+# the wire format both devices speak: the ESP32's copy and Sloop's must be byte-identical
+add_test(NAME wire_identity COMMAND ${CMAKE_COMMAND} -E compare_files
+    ${CMAKE_CURRENT_SOURCE_DIR}/core/include/fm1/cartridge_wire.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/sloop-fm1/firmware/src/cartridge_wire.h)

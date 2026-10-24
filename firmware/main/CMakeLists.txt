@@ -1,6 +1,7 @@
 set(sources "main.c" "usb_midi_host.c" "slots.c"
     "../../core/cartridge_protocol.c" "../../core/usb_midi.c" "../../core/usb_descriptors.c")
-set(requires usb esp_timer app_update esp_partition esp_app_format)
+# (unconditional: the requirements are expanded before the sdkconfig is read)
+set(requires usb esp_timer app_update esp_partition esp_app_format esp_driver_uart nvs_flash bootloader_support)
 set(includes "." "../../core/include" "../../synth")
 set(ldfragments)
 if(CONFIG_FM1_ENABLE_UAC_TX)
@@ -8,7 +9,7 @@ if(CONFIG_FM1_ENABLE_UAC_TX)
     list(APPEND requires espressif__usb_host_uac)
 endif()
 if(CONFIG_FM1_AUDIO_SYNTH)
-    list(APPEND sources "../../synth/cartridge_remote.c")
+    list(APPEND sources "../../synth/cartridge_remote.c" "../../synth/cartridge_state.c" "persist.c")
 endif()
 # Each port is one translation unit over its vendored upstream sources (-fwrapv: the fixed-point
 # DSP relies on wraparound); only the large delay lines go to PSRAM (the .lf fragments).

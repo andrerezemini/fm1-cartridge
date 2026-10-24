@@ -25,8 +25,9 @@ male-to-male adapter ([hardware](../hardware/README.md)).
   native tests of the protocol, the receiver and each synthesizer, a CLI simulator with WAV/JSON
   per synthesizer ([SIMULATION.md](SIMULATION.md)), and the cartridge server.
 - The ESP-IDF firmware with one profile per synthesizer, three firmware slots and rollback
-  ([FIRMWARE_SLOTS.md](FIRMWARE_SLOTS.md)). The UAC TX profiles are experimental; the MIDI profile
-  sends no audio.
+  ([FIRMWARE_SLOTS.md](FIRMWARE_SLOTS.md)), each firmware keeping its sound in NVS. The UAC TX
+  profiles are experimental; the MIDI profile sends no audio. A native model of the audio return
+  end to end (`tests/test_pipeline.c`) gives the buffering's latency and margin, not a measurement.
 - Sloop with a concurrent ring, ASRC, mixer input, gain control, the CARTRIDGE page, the cartridge
   track and the charger control, following the [SLOOP_INTEGRATION.md](SLOOP_INTEGRATION.md) contract
   ([patch and provenance](../integrations/sloop-fm1/README.md)).

@@ -48,9 +48,9 @@ no references to the ROM, register access restricted to `hal/`, loader RAM-only 
 
 | Resource | Upstream 2.7.1 | Cartridge profile | Diagnostic build | Limit |
 | --- | ---: | ---: | ---: | ---: |
-| App image | 577,920 B | **579,952 B** | 580,064 B | 581,564 B |
-| Free flash | 3,644 B | **1,612 B** | 1,500 B | |
-| RAM `.data + .bss` | 58,892 B | 60,844 B | 60,876 B | 98,304 B |
+| App image | 577,920 B | **581,096 B** | 581,244 B | 581,564 B |
+| Free flash | 3,644 B | **468 B** | 320 B | |
+| RAM `.data + .bss` | 58,892 B | 60,892 B | 60,924 B | 98,304 B |
 | Low RAM | 22,772 B | 22,772 B | 22,772 B | 29,488 B after the RAM code |
 | Pool | 333,900 B | 333,900 B | 333,900 B | 344,064 B, at least 8,192 B free |
 | Free pool | 10,164 B | 10,164 B | 10,164 B | |
@@ -61,8 +61,8 @@ The loader also includes `usb.c`, so it carries the shared EP0 validations. The 
 additional memory is in normal RAM; the pool keeps its reserve.
 
 SHA-256 of the cartridge package built from this tree: `felucca.bin`
-`51b801abdff65a06b646db0974b1377669ba7dd26a30af27817bc435d6d6b441`, `felucca.fwsc`
-`012ee2b60c941650aeca2eb9064bbcbd1b6fba5c64f2594bca3df8729269d3d2`. Sources that use
+`05dc238006da0c931d654b17c6664e9467fe6cd8f99551f3babf5410354aca58`, `felucca.fwsc`
+`8a9210c271e8b07c4076ac1bd5a07d6dd67d783694070e585345b595bf1a4e8c`. Sources that use
 `__DATE__`/`__TIME__` change the hashes of a rebuild.
 
 ## Native tests
@@ -76,24 +76,39 @@ They cover:
 
 - Receiver: packet validation, order/channels, slot and index wrap, gain, numeric overflow,
   disconnection, silence, reactivation and reset preemption during consumption; each clock
-  scenario of -1,000/0/+1,000 ppm runs 120 simulated seconds without underrun or overrun. A
-  ±10,000 ppm case exceeds the available correction and checks the bounded recovery, with no
-  access outside the buffers; it produces losses/reprimes, as expected.
+  scenario of -1,000/0/+1,000 ppm runs 120 simulated seconds without underrun or overrun, with
+  the rate loop reading the occupancy as each burst begins. A ±10,000 ppm case exceeds the
+  available correction and checks the bounded recovery, with no access outside the buffers; it
+  produces losses/reprimes, as expected. A closed-loop model (bursts rendered in 10 % to 80 % of
+  their period, the host's packets at any phase) starts every stream on a burst's first block at
+  the aim, within 0.95 cent; with the render varying from 0.8 to 3.8 ms a burst, 0.26 cent at the
+  start and a steady wobble of 0.15 cent peak to peak. The test runner also checks that `audio.c`
+  marks each burst (`uac_rx_burst`). These run with the gain applied at once (`UAR_RAMP 0`);
+  `tests/uac_rx_ramp_test.c` checks the 5.8 ms fade-in of a start and of a re-prime and the gain's
+  glide over a block, for USB RETURN and for the cartridge track's LEVEL.
 - USB: 24 combinations of playback on/off, capture on/off, CDC on/off/hidden and capture rates.
   Descriptors, EP0, controls, altsettings and mocked DMA are tested. The descriptors with CDC
   disabled from the menu match byte for byte those of the build without CDC.
 - Real mixer: RX disabled or zero gain preserve the reference hash `d098dd7f4a0fcc65`; an active
   return modifies the audio and gives the same result for splits 0, 15 and automatic, including
   with core 1 simulated by a thread with delays. Each block is consumed once.
-- Real menu: four capture/CDC variants, knob limits, mute/unmute, visual refresh and tab width.
-  The gain does not change the persisted settings word.
+- Real menu: four capture/CDC variants, knob limits, mute and unmute back to the level it had,
+  visual refresh and tab width. The gain does not change the persisted settings word.
 - CARTRIDGE page (`tests/cartridge_ui_test.c`): page number among the GLO pages, firmware name
   and slots from the reply, the FIRMWARE row and footer, request/retry/timeout/reconnection,
-  stale replies, no LCD writes when idle, and the charger sequence with a simulated HAL.
+  stale replies, a newer cartridge's longer reply, the header following the stream (OK / NO
+  AUDIO), no LCD writes when idle, and the charger sequence with a simulated HAL (ON by default,
+  a charger found off at start turned back on, AUTO).
 - Cartridge track (same test): the track on the reply's MIDI channel, its names, notes over MIDI
   with the engine silent and no double send at OUT = SEQ, steps played with OUT at KEYS, STOP,
-  MUTE, PRESETS on HOME and on the PRESETS page (crossing into the next and previous engine), OMNI
-  and the handover back to the internal engine.
+  MUTE, PRESETS on HOME and on the PRESETS page (crossing into the next and previous engine, and a
+  second turn dropped while it crosses, a crossing dropped whole by a page entry), OMNI and the
+  handover back to the internal engine, the All Notes Off at takeover, a panic during a preset fade,
+  a note-off lost on a full ring, the autosave guard (`cart_quiet`), the battery level with the
+  cartridge, the clock and transport with CLOCK at OFF and START on a bar line for a cartridge that
+  comes back mid-song, LEVEL and MUTE on the return and the track's meter, the 5 s liveness query
+  (a PRESETS turn during it kept), the query when the page is left, a signed value's knob
+  acceleration, and recovery within 4 s after each of six outages in a row.
 
 The receiver and USB use the full ASan/UBSan set. Mixer and UI repeat only the upstream exclusions
 of `shift-base` and `signed-integer-overflow`, because of the existing two's-complement DSP
@@ -109,9 +124,10 @@ measurement of the audio deadline on the FM-1.
 
 ## Limits of the cost evidence
 
-`tests/target_budget.py` estimates the assembly cost without changing its budgets: `mix_block`
-has 3,432 instructions upstream and 3,532 in the cartridge profile; `mix_units` stays at 240;
-`uac_rx_service` has 153 instructions, 73 inside loops and no hardware division in those loops.
+`tests/target_budget.py` estimates the assembly cost without changing its budgets; its counting run
+on this profile's listing gives `mix_block`, which inlines the receiver's `uac_rx_mix`, 3,661
+instructions (3,432 upstream); `mix_units` 249; `uac_rx_service` 143 instructions, 12 inside loops
+and no hardware division in those loops.
 These numbers do not measure cycles, worst case or deadlines; inlining and heuristic loop
 detection change the estimator's weights. The ASRC cost must be measured on the FM-1 with the
 engines and effects active.

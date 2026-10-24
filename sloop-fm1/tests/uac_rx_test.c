@@ -11,6 +11,9 @@ static uint32_t test_lock(void) { uint32_t s = test_icfg; test_icfg &= ~0x100u; 
 static void test_unlock(uint32_t s) { assert(lock_depth); lock_depth--; test_icfg = s; }
 static void precommit(void);
 #define FELUCCA_UAC_RX 1
+#ifndef UAR_RAMP
+#define UAR_RAMP 0u                       /* the exact-value tests: the gain at once (tests/uac_rx_ramp_test.c: the ramp) */
+#endif
 #define UAC_RX_BARRIER() __asm__ volatile("" ::: "memory")
 #define UAC_RX_LOCK() test_lock()
 #define UAC_RX_UNLOCK(s) test_unlock(s)
@@ -106,6 +109,7 @@ static void test_wrap_order(void)
         while (uar_w - uar_r >= (uar.go ? 300u : UAR_PRIME)) {
             memset(l, 0, sizeof l); memset(r, 0, sizeof r); uac_rx_mix(l, r, 32);
             for (j = 0; j < 32; j++) {
+                if (!heard && !j) last = (uint32_t)l[0];   /* (a start skips to the rate loop's aim: from there) */
                 assert(l[j] == r[j] && l[j] >= (int32_t)last && l[j] <= (int32_t)last+3);
                 last=(uint32_t)l[j]; heard++;
             }
@@ -192,6 +196,7 @@ static void test_drift(int ppm, uint32_t seconds)
             samples(t,16000,-8000); pkt+=1000000ull;
         } else if(render<end) {
             for(j=0;j<8;j++) {
+                if(!j) uac_rx_burst();              /* the burst begins: the rate loop's turn (audio.c) */
                 memset(l,0,sizeof l); memset(r,0,sizeof r); uac_rx_mix(l,r,32);
                 if(uar.go) for(t=0;t<32;t++) assert(l[t]==16000 && r[t]==-8000);
             }
@@ -215,11 +220,80 @@ static void test_drift(int ppm, uint32_t seconds)
     if(ppm>0 && ppm<=1000) assert(uar.correction<0);
     if(ppm<0 && ppm>=-1000) assert(uar.correction>0);
 }
+/* The FM-1's timing around the receiver, closed loop: a DAC burst of eight 32-frame blocks every 256 frames,
+ * rendered in a share of the period that may vary burst to burst (audio.c marks the burst at the interrupt's
+ * entry, each block's mix comes at the end of its render), the host's 1 ms packets at any phase against it
+ * (TIMER5 pushes them between the blocks). Every start must begin on a burst's first block, at the rate
+ * loop's aim. Returns the largest rate
+ * correction in the first 2 s (the start's pitch excursion) and, in *pp, its peak-to-peak range from 5 s
+ * on (the steady wobble); both in cents. */
+#define CENTS(c) ((double)(c) * 1e6 / UAR_ONE / 577.79)    /* (1200 log2(1 + x) for x of a few 1e-4) */
+static double loop_run(uint32_t phase_us, uint32_t share_pct, uint32_t jitter_pct, uint32_t seconds, double *pp)
+{
+    const uint64_t period = 256ull * 1000000000ull / 44100ull, end = (uint64_t)seconds * 1000000000ull;
+    uint64_t pkt = (uint64_t)phase_us * 1000ull, burst, started = 0;
+    uint32_t acc = 0, j, rng = phase_us * 2654435761u + share_pct;
+    int32_t l[32], r[32], cmax = 0, lo = INT32_MAX, hi = INT32_MIN;
+    fresh();
+    for (burst = 0; burst < end; burst += period) {
+        uint64_t render;
+        rng = rng * 1103515245u + 12345u;
+        render = period * (share_pct + (jitter_pct ? (rng >> 16) % (jitter_pct + 1u) : 0u)) / 100u;
+        for (j = 0; j <= 8; j++) {
+            uint64_t at = burst + render * j / 8u;    /* (j = 0: the interrupt's entry) */
+            uint32_t was = uar.go;
+            while (pkt <= at) {
+                uac_rx_tick((uint32_t)(pkt / 1000000ull));
+                acc += 44100; samples(acc / 1000u, 1000, -1000); acc %= 1000u;
+                pkt += 1000000ull;
+            }
+            if (!j) {
+                uac_rx_burst();
+                continue;
+            }
+            memset(l, 0, sizeof l); memset(r, 0, sizeof r); uac_rx_mix(l, r, 32);
+            if (!was && uar.go) {
+                assert(j == 1 && !started && uar_mark - uar_r == UAR_TARGET_FIRST - 32u);
+                started = at;
+            }
+        }
+        if (started && burst - started < 2000000000ull) {
+            if (uar.correction > cmax) cmax = uar.correction;
+            if (-uar.correction > cmax) cmax = -uar.correction;
+        } else if (started && burst - started >= 5000000000ull) {
+            if (uar.correction < lo) lo = uar.correction;
+            if (uar.correction > hi) hi = uar.correction;
+        }
+    }
+    assert(started && !uar.underruns && !uar.overruns);
+    if (pp) *pp = CENTS(hi - lo);
+    return CENTS(cmax);
+}
+static void test_start_phases(void)
+{
+    static const uint32_t share[] = {10, 30, 50, 80};
+    double worst = 0, pp = 0, e;
+    uint32_t k, s;
+    for (s = 0; s < 4u; s++) {
+        double w = 0;
+        for (k = 0; k < 24u; k++) {
+            e = loop_run(k * 242u, share[s], 0, 3, 0);
+            if (e > w) w = e;
+        }
+        printf("closed loop, render %u%% of the period: start excursion at most %.2f cent\n", share[s], w);
+        if (w > worst) worst = w;
+    }
+    e = loop_run(0, 14, 51, 20, &pp);                 /* the render 0.8 .. 3.8 ms a burst */
+    printf("closed loop: start on a burst's first block at every packet phase and render share, pitch excursion "
+           "at most %.2f cent; render 0.8-3.8 ms: start %.2f cent, steady wobble %.2f cent peak to peak\n", worst, e, pp);
+    assert(worst < 1.2 && e < 0.5 && pp < 0.3);
+}
 int main(void)
 {
     test_packets(); test_wrap_order(); test_lifecycle(); test_gain_bounds();
     test_drift(-1000,120); test_drift(0,120); test_drift(1000,120);
     test_drift(-10000,20); test_drift(10000,20);
+    test_start_phases();
     puts("uac_rx: all native receiver tests passed (hardware untested)");
     return 0;
 }

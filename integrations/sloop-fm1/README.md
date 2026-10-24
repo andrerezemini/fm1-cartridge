@@ -5,7 +5,7 @@ The FM-1 runs [Sloop](https://github.com/isod89/sloop-fm1) 2.7.1 (upstream commi
 [`sloop-fm1/`](../../sloop-fm1/) and is edited there. This folder holds its provenance:
 
 - [`sloop-fm1-cartridge.patch`](sloop-fm1-cartridge.patch): the whole difference between upstream
-  and `sloop-fm1/` (15 files added, 14 modified), as a `git diff --binary`.
+  and `sloop-fm1/` (16 files added, 24 modified), as a `git diff --binary`.
 - [`manifest.json`](manifest.json): the upstream commit and tree, the patch's SHA-256, the git tree
   id the patch produces (equal to `sloop-fm1/` in this repository), the list of files, the build
   flags and the figures of the package built from it.
@@ -14,11 +14,13 @@ The FM-1 runs [Sloop](https://github.com/isod89/sloop-fm1) 2.7.1 (upstream commi
 
 - **USB audio playback into the FM-1:** a UAC1 playback interface on EP 0x04 OUT (PCM16 stereo,
   44,100 Hz, adaptive isochronous), a ring buffer with a Hermite ASRC that follows the host's
-  clock, and a single stereo sum into the mixer before the global effects and limiter. Details in
+  clock (its rate loop reads the occupancy as each DAC burst begins, and a stream starts on a burst's
+  first block at its aim), a fade-in at every start, a gain glide, and a
+  single stereo sum into the mixer before the global effects and limiter. Details in
   [CARTRIDGE_USB_RETURN.md](../../sloop-fm1/docs/CARTRIDGE_USB_RETURN.md).
-- **HOME → USB menu:** **USB RETURN** (gain and mute of the return) and **CHARGE** (holds the
-  FM-1's internal charger off while the cartridge answers, so the cartridge's cell does not charge
-  the FM-1's battery).
+- **HOME → USB menu:** **USB RETURN** (gain and mute of the return) and **CHARGE** (ON by default;
+  AUTO holds the FM-1's internal charger off while the cartridge answers, so the cartridge's cell
+  does not charge the FM-1's battery).
 - **GLO → CARTRIDGE page:** engine, preset, parameter and value of the cartridge's synthesizer on
   the four knobs, the running firmware's name, and the FIRMWARE parameter that picks the ESP32's
   firmware slot; protocol version 3 in `firmware/src/cartridge_wire.h`, byte-identical to
@@ -26,9 +28,13 @@ The FM-1 runs [Sloop](https://github.com/isod89/sloop-fm1) 2.7.1 (upstream commi
   [docs/CARTRIDGE.md](../../docs/CARTRIDGE.md).
 - **Cartridge track:** the track on the cartridge's MIDI channel sends every note its engine would
   play (keys, chords, arpeggiator, steps, rolls, takes) as MIDI on its channel, keeps that engine
-  silent and out of the mix, shows the cartridge's engine and preset, and turns PRESETS into the
-  cartridge's preset browser (`core.h`, `voice.c`, `seq.c`, `fx.c`, `cartridge.c`, `ui_input.c`,
-  `ui_draw.c`, `ui_studio.c`).
+  silent and out of the mix, ends with an All Notes Off what its keys held when it takes the track,
+  sets the return's level from its LEVEL and MUTE, sends the cartridge the clock while it answers
+  (START on the next bar line when it comes back while the song plays), shows the cartridge's
+  engine and preset, and turns PRESETS into the cartridge's preset browser
+  (`core.h`, `voice.c`, `seq.c`, `fx.c`, `audio.c`, `usb.c`, `cartridge.c`, `ui_input.c`,
+  `ui_draw.c`, `ui_studio.c`). Autosave and section saves wait while the cartridge sounds
+  (`project.c`); the editor's sample-slot writes are refused while the song plays (`editor.c`).
 - **Build profile and tests:** `build-cartridge.sh` (`FELUCCA_CARTRIDGE=1`, `FELUCCA_UAC_RX=1`,
   `FELUCCA_UAC=0`, `FELUCCA_CDC=0`), an optional diagnostic footer (`FELUCCA_CARTRIDGE_DIAG=1`)
   and `tests/run_cartridge_tests.sh`. Details in
@@ -46,8 +52,8 @@ cd .. && sh tools/test_sloop_cartridge.sh native   # Sloop's UI against the real
 ```
 
 The package's memory figures and hashes are in [manifest.json](manifest.json) and
-[CARTRIDGE_BUILD.md](../../sloop-fm1/docs/CARTRIDGE_BUILD.md): app 579,952 B of 581,564 B
-(1,612 B free); RAM, low RAM and pool within the upstream limits. Installing it on the FM-1, with
+[CARTRIDGE_BUILD.md](../../sloop-fm1/docs/CARTRIDGE_BUILD.md): app 581,096 B of 581,564 B
+(468 B free); RAM, low RAM and pool within the upstream limits. Installing it on the FM-1, with
 a backup of its projects and settings, is described in [docs/FLASHING.md](../../docs/FLASHING.md).
 
 ## Reproduce `sloop-fm1/` from upstream

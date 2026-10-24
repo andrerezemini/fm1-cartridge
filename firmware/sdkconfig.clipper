@@ -2,7 +2,7 @@ CONFIG_FM1_ENABLE_UAC_TX=y
 CONFIG_FM1_AUDIO_CLIPPER=y
 CONFIG_FM1_SYNTH_ENGINE=0
 CONFIG_FM1_SYNTH_PRESET=0
-# Real-time DSP budget (2,902 us per 128 frames): -O2, 32 KB instruction cache over the
+# Real-time DSP budget (1,451 us per 64 frames): -O2, 32 KB instruction cache over the
 # ~700 KB flash-resident DSP, 64 KB data cache, and the hot synth state in internal RAM
 # (clipper.lf). Without them the render misses its deadline, the UAC ring runs empty, the
 # host stops sending ISO packets and the FM-1 hears the gaps as a stuttering note.

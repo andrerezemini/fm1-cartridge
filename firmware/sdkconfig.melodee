@@ -2,7 +2,7 @@ CONFIG_FM1_ENABLE_UAC_TX=y
 CONFIG_FM1_AUDIO_MELODEE=y
 CONFIG_FM1_SYNTH_ENGINE=0
 CONFIG_FM1_SYNTH_PRESET=0
-# Real-time DSP budget (2,902 us per 128 frames), as sdkconfig.clipper: -O2, 32 KB instruction
+# Real-time DSP budget (1,451 us per 64 frames), as sdkconfig.clipper: -O2, 32 KB instruction
 # cache, 64 KB data cache; only the sequencer's pattern pool and recording lists live in PSRAM
 # (melodee.lf); the audio arena, tracks and mixer stay in internal RAM.
 CONFIG_COMPILER_OPTIMIZATION_PERF=y

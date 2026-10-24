@@ -62,10 +62,10 @@ The local Studio build may append status `1` to a PROJECT reply when playback
 prevents a load/save. No operation occurred; stop playback and try again.
 An absent status byte retains the original reply format.
 | 10 NAMES | engine | engine, count, count preset-name strings, then the two edit-page titles |
-| 11 SMP_BEGIN | slot 0..2 | slot, rc (0 ok). Erases the slot's header sector: the slot is empty from now on |
-| 12 SMP_WRITE | slot, offset (3 × 7 bit, LSB first), pack7 data (≤ 256 bytes) | slot, offset, rc: 0 ok, 1 arguments, 2 erase, 3 write, 4 slot in use (send SMP_BEGIN first). Offset ≥ 512 and a multiple of 256; writes go in increasing order (a write at a 4 KiB boundary erases that sector) |
-| 13 SMP_END | slot, pack7 header (480 bytes) | slot, rc: 0 ok, 1 size, 2 header, 3 data CRC, 4 flash, 5 zones |
-| 14 SMP_ERASE | slot | slot, rc (erases the whole slot, ~1 s) |
+| 11 SMP_BEGIN | slot 0..3 | slot, rc: 0 ok, 1 erase, 3 the song plays. Erases the slot's header sector: the slot is empty from now on |
+| 12 SMP_WRITE | slot, offset (3 × 7 bit, LSB first), pack7 data (≤ 256 bytes) | slot, offset, rc: 0 ok, 1 arguments, 2 erase, 3 write, 4 slot in use (send SMP_BEGIN first), 5 the song plays. Offset ≥ 512 and a multiple of 256; writes go in increasing order (a write at a 4 KiB boundary erases that sector) |
+| 13 SMP_END | slot, pack7 header (480 bytes) | slot, rc: 0 ok, 1 size, 2 header, 3 data CRC, 4 flash, 5 zones, 6 no SMP_BEGIN first, 7 the song plays |
+| 14 SMP_ERASE | slot | slot, rc: 0 ok, 1 erase, 3 the song plays (erases the whole slot, ~1 s) |
 | 15 SMP_INFO | — | slots, slot KiB, then per slot: zone count (0 = empty), name string, data KiB |
 | 16 UP_LIST | start, count (1..16) | start, count, total slots, then per slot: used (0/1), engine, name string ("" if unused) |
 | 17 UP_GET | slot | slot, used, engine, name, P_COUNT × v14, 16 × (note, flags) |
@@ -484,5 +484,6 @@ before 2.7 does not answer `LIVE`: the page keeps its mixer and keys (TRACK_MIX,
   work while the computer records.
 - **Safety.** Only `PROJECT` save, the sample-slot commands and `UP_PUT` / `UP_STORE` / `UP_ERASE` write flash, and only in
   Felucca's own storage; never the app or the update area. Since SLOOP 2.4 every one of them, and
-  `BK_PUT` of a preset bank, answers rc 3 while the song plays (as the panel refuses to save then): a
-  flash erase silences the audio for about 50 ms.
+  `BK_PUT` of a preset bank, answers rc 3 while the song plays (as the panel refuses to save then;
+  the sample slots' SMP_WRITE answers rc 5 and SMP_END rc 7, whose rc 3 means a write or CRC
+  failure): a flash erase silences the audio for about 50 ms.

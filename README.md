@@ -1,7 +1,7 @@
 # FM1 Cartridge — Clipper, Melodee and Felucca on an ESP32-S3
 
 A cartridge with an **ESP32-S3 and its own LiPo** for the M-VAVE FM-1 running Sloop. The ESP32 is
-the USB host: it receives notes and clock from the FM-1 over USB-MIDI, renders one of three ported
+the USB host: it receives notes, clock and transport from the FM-1 over USB-MIDI, renders one of three ported
 synthesizers (Clipper, Melodee or Felucca) and sends stereo PCM back over USB audio, which the
 FM-1 mixes into its own output. The cartridge has no DAC. The three synthesizers live in three
 flash slots, and the FM-1 chooses which one runs from its GLO → CARTRIDGE page.
@@ -101,8 +101,9 @@ Details: [electrical risks](hardware/README.md#risks-of-electrical-damage) and
 
 Tap GLO and turn SELECT to **CARTRIDGE**: knobs 1 and 2 choose engine and preset, 3 a parameter
 and 4 its value. The header shows the running firmware (**CLIPPER OK**, **MELODEE OK**,
-**FELUCCA OK**) or NO LINK. To switch synthesizer, turn knob 3 to **FIRMWARE** and
-knob 4 to a slot: the cartridge reboots into it 2 s later. Edits live in RAM.
+**FELUCCA OK**) or NO LINK. To switch synthesizer, stop the transport, turn knob 3 to
+**FIRMWARE** and knob 4 to a slot: the cartridge reboots into it 2 s later. Each firmware keeps
+its sound, MIDI channel and edits on the cartridge.
 
 The [user guide](docs/USER_GUIDE.md) walks through every step, from connecting the cartridge to
 switching firmware, with a troubleshooting table.
@@ -166,8 +167,9 @@ connection is not a universal Type-C host port.
 
 The ports keep 44.1 kHz, one stereo output and each upstream engine's voices (8 shared voices in
 Clipper and Felucca; in Melodee, the single-core budget: a 5-voice Prophet and a 16-voice FM6).
-They play one part of each instrument and do not port the original UIs, persistence, editors,
-Program Change or CC20/MORPH. The build sets the initial sound; the CARTRIDGE page edits it live.
+They play one part of each instrument and do not port the original UIs, user presets, editors,
+Program Change or CC20/MORPH. The build sets a firmware's first sound; the CARTRIDGE page edits it
+live and the cartridge keeps it.
 
 ## Not yet understood
 
@@ -187,12 +189,12 @@ Parts of the electrical design are still open, so no circuit here is a proven de
   path without back-feed; battery monitoring with a low-battery shutdown; a regulator that keeps
   3V3 in specification over the whole cell range; a tested enclosure
   ([hardware](hardware/README.md#future-hardware-work)).
-- **ESP32 firmware:** measured voice limits per engine, edits and user presets kept across
-  reboots, MIDI CC and Program Change, several parts on different channels, slot updates over the
-  cartridge link ([firmware](firmware/README.md#future-firmware-work)).
-- **Sloop:** HOME knobs mapped to cartridge parameters on the cartridge track, the track's LEVEL
-  and PAN as MIDI CC, the cartridge's sound saved with a project, and the cartridge's battery level
-  on the FM-1.
+- **ESP32 firmware:** measured voice limits per engine, user presets, MIDI CC and Program
+  Change, several parts on different channels, slot updates over the cartridge link
+  ([firmware](firmware/README.md#future-firmware-work)).
+- **Sloop:** HOME knobs mapped to cartridge parameters on the cartridge track, the track's PAN on
+  the return, the cartridge's sound saved with a project, and the cartridge's battery level on the
+  FM-1.
 
 ## Repository map
 

@@ -35,14 +35,22 @@ void clipper_synth_render(int16_t *stereo, size_t frames);
  * retains the selected sound. Safe before init. */
 void clipper_synth_panic(void);
 
+/* Lets go of every sounding note at the next 32-frame block (their release
+ * runs out); queued events, effect tails and the sound are kept. */
+void clipper_synth_release(void);
+
 /* Select an upstream engine/factory preset, without remapping engine IDs.
- * Returns 0 on success, -1 if invalid. Changing a preset panics first. */
+ * Returns 0 on success, -1 if invalid. What sounds fades out over a few ms
+ * with the old sound (the effect tails ring on); queued events are kept. */
 int clipper_synth_set_preset(uint32_t engine, uint32_t preset);
 uint32_t clipper_synth_engine_count(void);
 uint32_t clipper_synth_preset_count(uint32_t engine);
 const char *clipper_synth_engine_name(uint32_t engine);
 const char *clipper_synth_preset_name(uint32_t engine, uint32_t preset);
 const char *clipper_synth_upstream_revision(void);
+/* Test hook: builds factory wavetable k with the port's bounded builder and compares every copy with
+ * upstream's wt_build_frame; the number of 32-frame blocks it took, or -1 on a difference. */
+int clipper_synth_wavetable_check(uint32_t table);
 
 /* The MIDI channel the instrument answers: 0 OMNI (the library default), 1..16 that channel
  * only; realtime messages are never filtered. Also catalogue entry 0 ("MIDI CH"). Same

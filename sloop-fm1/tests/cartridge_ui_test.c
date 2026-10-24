@@ -33,7 +33,7 @@ static void response(uint8_t *r)
 {
     uint32_t i;
     for (i = 0; i < CART_REPLY_SIZE; ++i) sysex_byte(r[i]);
-    cart_service(1);
+    cart_service(cart.active);                     /* (the page as it is: shown or hidden) */
 }
 static void exchange(void)
 {
@@ -57,9 +57,15 @@ static void exchange(void)
 #endif
     response(r);
 }
-static void refresh_page(void)
+static void leave_page(void)                      /* the page hidden, its leaving query answered */
 {
     cart_service(0);
+    if (so_w != so_r) exchange();
+}
+static void refresh_page(void)                    /* leave the page (its query answered), open it again */
+{
+    cart_service(0);
+    if (so_w != so_r) exchange();
     fm1_ms += 501;
     cart_service(1);
 }
@@ -106,8 +112,13 @@ static void test_display_refresh(void)
     cart_turn(3, 2);
     check(!cart.delta[3], "knobs wait for the page re-entry state before editing");
     if (so_w != so_r) exchange();
-    /* A full TX ring cannot swallow the entry refresh or allow stale edits. */
+    /* Leaving the page sends a query: the cartridge's cursor moves off FIRMWARE, a switch it armed is cancelled. */
+    cart_turn(3, 1);
     cart_service(0);
+    check(cart.waiting && cart.q[CART_OP] == CART_QUERY && !cart.delta[3],
+          "leaving the page queries the cartridge (an armed FIRMWARE switch is cancelled), turns not sent dropped");
+    exchange();
+    /* A full TX ring cannot swallow the entry refresh or allow stale edits. */
     so_w = so_r + SXQ;
     cart_service(1); cart_turn(0, 1);
     check(!cart.waiting && cart.refresh && !cart.delta[0],
@@ -183,7 +194,7 @@ static void test_cartridge_track(void)
     check(!(ct_set[0][0] | ct_set[0][1] | ct_set[0][2] | ct_set[0][3]), "STOP ends every note sent to the cartridge");
     put_step(&trk[0], 0, 0, &n60, ST_REST, 0);
     /* PRESETS on HOME browses the cartridge's presets on its track */
-    ui.home = 1; song.sel = 0;
+    ui.home = 1; song.sel = 0; leave_page();
     pre = cart_u14(cart.view + CART_PRE);
     if (pre + 1u < cart_u14(cart.view + CART_NPRE)) {
         encs[panel.enc[EN_PRESET]] = 1; frame();
@@ -242,6 +253,135 @@ static void test_cartridge_track(void)
     check(cart_tracks == 1u, "channel 1 again: track 1 is the cartridge's");
     frame();
 }
+/* the note lifecycle and the link around the cartridge track: takeover, panics, a full MIDI OUT ring, autosave,
+ * PRESETS across engines, the liveness query, the battery, the clock */
+static void test_cartridge_lifecycle(void)
+{
+    uint32_t i, sent;
+    set_cart_channel(0); frame();
+    mo_r = mo_w;
+    set_cart_channel(1); frame();
+    check(cart_tracks == 1u && midi_seen(0xB0, 123) == 1,
+          "a track the cartridge takes: an All Notes Off on its channel ends the keys' plain notes");
+    mo_r = mo_w;
+    trk_note_on(&trk[0], 68, 90);
+    trk[0].pold = 1; panic_req |= 1u; frame(); trk[0].pold = 0;
+    check(midi_seen(0x80, 68) == 1, "a panic during a preset fade still ends the cartridge track's notes");
+    trk_note_on(&trk[0], 70, 90);
+    mo_w = mo_r + MQ;                                   /* the ring full (USB not draining) */
+    trk_note_off(&trk[0], 70);
+    check(mo_lost == 1u, "a note-off lost on a full ring is remembered");
+    mo_r = mo_w; frame();
+    check(midi_seen(0xB0, 123) == 1 && !mo_lost, "then an All Notes Off on that channel ends it");
+    trk_note_on(&trk[0], 72, 90);
+    check(!cart_quiet(), "autosave waits while a cartridge track holds a note");
+    trk_note_off(&trk[0], 72); frame();
+    uar_loud_ms = fm1_ms;
+    check(!cart_quiet(), "autosave waits while the USB return sounds");
+    fm1_ms += 1001;
+    check(cart_quiet(), "and saves once both are quiet");
+    usb.suspended = 0; usb.config = 1;
+    check(batt_shown() == batt_level(), "the battery shows its level with the cartridge (it powers nothing)");
+    {
+        uint8_t keep = cart.online;
+        cart.online = 0; i = (uint32_t)batt_shown(); cart.online = keep;
+        check(i >= 1u && i <= 3u, "a computer host still shows charging");
+    }
+    song.g[G_CLKOUT] = 0; song.g[G_SYNC] = 0; mo_r = mo_w; transport_req = 1;
+    frames(4); sent = midi_seen(0xFA, 0);
+    check(sent == 1 && midi_seen(0xF8, 0) > 0, "with the cartridge answering, START and the clock go out with CLOCK at OFF");
+    transport_req = 2; frames(2);
+    check(midi_seen(0xFC, 0) == 1, "and STOP");
+    {   /* a cartridge that comes up while the song plays: START on the next bar line, not where the song is */
+        uint32_t f, beat = 0, pos = 0, early = 0;
+        transport_req = 1; frames(2);
+        cart.online = 0; frame(); cart.online = 1; mo_r = mo_w;
+        for (f = 0; f < 200u && !midi_seen(0xFA, 0); f++) {
+            mo_r = mo_w; frame();
+            if (!f) early = midi_seen(0xFA, 0);
+            beat = clk_beat; pos = clk_pos;
+        }
+        check(!early && midi_seen(0xFA, 0) == 1 && beat % 4u == 0u && pos < 22u * CTL * (uint32_t)song.g[G_BPM],
+              "a cartridge back while the song plays gets START on the next bar line");
+        transport_req = 2; frames(2); mo_r = mo_w;
+    }
+    {
+        uint32_t was = uar.active;
+        uar.active = 1; cart_service(1); cart.dirty = 0;
+        uar.active = 0; cart_service(1);
+        check(cart.dirty, "the page header follows the stream (OK / NO AUDIO)");
+        uar.active = was; cart_service(1);
+    }
+#ifndef CART_REAL_SERVER
+    /* PRESETS across an engine boundary: one crossing at a time */
+    ui.home = 1; song.sel = 0; leave_page();
+    cart_put14(cart.view + CART_PRE, (uint16_t)(cart_u14(cart.view + CART_NPRE) - 1u)); cart.view[CART_ENG] = 3;
+    memset(cart.delta, 0, sizeof cart.delta);
+    encs[panel.enc[EN_PRESET]] = 1; frame();
+    encs[panel.enc[EN_PRESET]] = 1; frame();
+    check(cart.delta[0] == 1 && !cart.delta[1], "a second turn waits while PRESETS crosses into the next engine");
+    memset(cart.delta, 0, sizeof cart.delta); cart.to_last = 0;
+    cart_put14(cart.view + CART_PRE, 0);
+    encs[panel.enc[EN_PRESET]] = -1; frame();
+    encs[panel.enc[EN_PRESET]] = -1; frame();
+    check(cart.delta[0] == -1 && cart.to_last && !cart.delta[1], "and while it crosses back into the previous engine");
+    cart_service(1);                                    /* the page opened before the crossing went out */
+    check(!cart.to_last && !cart.delta[0], "a page opened before a crossing goes out drops it whole");
+    leave_page(); cart_browse(1);
+    check(cart.delta[1] == 1, "and PRESETS browses again");
+    memset(cart.delta, 0, sizeof cart.delta); cart.to_last = 0;
+    ui.home = 0;
+#endif
+    /* the page hidden: a query every 5 s while linked; an outage gives the track back, a reply takes it again */
+    leave_page();
+    while (so_w != so_r || cart.waiting) { fm1_ms += 251; cart_service(0); if (so_w != so_r) exchange(); }
+    cart_service(0);
+    check(cart.online && so_w == so_r, "linked, page hidden: no query before 5 s");
+    fm1_ms += 5001; cart_service(0);
+    check(cart.waiting && cart.q[CART_OP] == CART_QUERY, "linked, page hidden: a liveness query after 5 s");
+    cart_turn(1, 1);
+    check(cart.delta[1] == 1, "a PRESETS turn during the liveness query is kept");
+    exchange(); cart_service(0);
+    check(cart.waiting && cart.q[CART_OP] == CART_PRESET, "and goes out after its reply");
+    exchange();
+    fm1_ms += 5001; cart_service(0); drain_request();
+    for (i = 0; i < 4u; i++) { fm1_ms += 251; cart_service(0); drain_request(); }
+    check(!cart.online && !cart_tracks, "an unanswered liveness query gives the track back to Sloop's sound");
+    for (i = 0; i < 40u && !cart.online; i++) { fm1_ms += 501; cart_service(0); if (so_w != so_r) exchange(); }
+    check(cart.online && cart_tracks == 1u, "the cartridge back: the track is its again, the page never opened");
+    for (i = sent = 0; i < 6u; i++) {                   /* outage after outage: the budget refills on every reply */
+        uint32_t j;
+        fm1_ms += 5001; cart_service(0); drain_request();
+        for (j = 0; j < 4u; j++) { fm1_ms += 251; cart_service(0); drain_request(); }
+        for (j = 0; j < 8u && !cart.online; j++) { fm1_ms += 501; cart_service(0); if (so_w != so_r) exchange(); }
+        sent += cart.online;
+    }
+    check(sent == 6u, "and again after each of six outages in a row, within 4 s (the probes refilled by every reply)");
+    {   /* a newer cartridge's reply (a later version, fields appended) is read as far as this version's go */
+        uint8_t r[CART_REPLY_SIZE];
+        uint32_t j;
+        refresh_page(); assert(drain_request() == CART_REQUEST_SIZE);
+        memcpy(r, cart.view, sizeof r);
+        cart_header(r, cart_u14(last_request + CART_SEQ), CART_REPLY, cart_u14(last_request + CART_REV));
+        r[4] = CART_VERSION + 1;
+        for (j = 0; j + 1 < CART_REPLY_SIZE; ++j) sysex_byte(r[j]);
+        sysex_byte(0x12); sysex_byte(0x34); sysex_byte(0xf7);
+        cart_service(1);
+        check(cart.online && !cart.waiting && cart.view[4] == CART_VERSION + 1, "a newer cartridge's longer reply is understood");
+        refresh_page(); exchange();
+    }
+    /* the USB return follows the cartridge track's LEVEL and MUTE (TRACKS), its meter shows the return */
+    trk[0].p[P_LEVEL] = TP[P_LEVEL].def; cart_tracks_block();
+    check(uar_track_q12 == 4096u, "the track's default LEVEL: the return at unity");
+    trk[0].p[P_LEVEL] = 0; cart_tracks_block();
+    check(uar_track_q12 == 0u, "LEVEL 0 mutes the return, as the track shows");
+    trk[0].p[P_LEVEL] = 127; cart_tracks_block();
+    check(uar_track_q12 > 4096u && uar_track_q12 < 4u * 4096u, "LEVEL up: the return louder, as a track's");
+    trk[0].p[P_LEVEL] = TP[P_LEVEL].def; trk[0].p[P_MUTE] = 1; cart_tracks_block();
+    check(uar_track_q12 == 0u, "MUTE mutes the return");
+    trk[0].p[P_MUTE] = 0; trk[0].peak = 0; uar_peak = 5000; cart_tracks_block();
+    check(uar_track_q12 == 4096u && trk[0].peak >= 5000 && !uar_peak, "the track's meter reads the return");
+}
 #ifndef CARTRIDGE_UI_HARNESS_ONLY
 int main(int argc, char **argv)
 {
@@ -256,6 +396,8 @@ int main(int argc, char **argv)
     cart_charge_boot();
     check(cart_keep.magic == CART_KEEP_MAGIC && cart_keep.boot_en == 1 && !cart_keep.off && !host_chg_writes,
           "boot reads the charger as the SoC left it (enabled) without writing");
+    check(cart_charge_on == 1, "CHARGE is ON by default: the charger stays on");
+    cart_charge_on = 0;                                 /* the AUTO policy, checked below */
     cart_service(0);
     check(cart.waiting && so_w != so_r && cart.probe == CART_PROBES - 1u,
           "hidden page probes the cartridge once USB is configured");
@@ -316,6 +458,7 @@ int main(int argc, char **argv)
         fm1_ms += 600; cart_service(1); exchange(); check(cart.online && !cart_on_firmware(), "back to the catalogue");
     }
     test_cartridge_track();
+    test_cartridge_lifecycle();
     int16_t local_params[P_COUNT]; memcpy(local_params, TSEL->p, sizeof local_params);
     uint8_t old_engine = cart.view[CART_ENG];
     encs[panel.enc[EN_K1]] = 1; encs[panel.enc[EN_K4]] = 3; frame();
@@ -342,6 +485,24 @@ int main(int argc, char **argv)
     check(last_request[CART_OP] == CART_PARAM, "KNOB 3 selects parameter");
     encs[panel.enc[EN_K4]] = 5; frame(); cart_service(1); exchange();
     check(last_request[CART_OP] == CART_VALUE, "KNOB 4 edits parameter value");
+#ifndef CART_REAL_SERVER
+    {   /* a value shown with its sign (+5, as PAN or a modulation amount) accelerates as -5 does */
+        uint8_t keep[CART_REPLY_SIZE];
+        int32_t turned[2];
+        uint32_t k, f;
+        memcpy(keep, cart.view, sizeof keep);
+        cart_put14(cart.view + CART_MIN, 8192 - 64); cart_put14(cart.view + CART_MAX, 8192 + 63);
+        for (k = 0; k < 2u; k++) {
+            str_cpy((char *)cart.view + CART_VAL_NAME, k ? "+5" : "-5", 16);
+            memset(cart.delta, 0, sizeof cart.delta); fm1_ms += 1000;
+            for (f = 0; f < 6u; f++) { encs[panel.enc[EN_K4]] = 1; frame(); }
+            turned[k] = cart.delta[3];
+        }
+        check(turned[0] > 6 && turned[1] == turned[0], "a signed value (+5) accelerates as a negative one does");
+        memset(cart.delta, 0, sizeof cart.delta);
+        memcpy(cart.view, keep, sizeof keep);
+    }
+#endif
     check(!memcmp(local_params, TSEL->p, sizeof local_params), "cartridge knobs leave Sloop track sound intact");
 #ifdef CART_REAL_SERVER
     /* Browse every engine from the real UI, including all reply labels. */
@@ -377,7 +538,7 @@ int main(int argc, char **argv)
         uint32_t w;
         check(cart.online && host_chg_en == 0, "link up before the menu checks");
         check(mi_sec(MI_CHARGE) == MS_RETURN && mi_row(MI_CHARGE) == 1 && !strcmp(mi_value(MI_CHARGE, &color), "AUTO"),
-              "CHARGE is the second knob of the USB section, AUTO by default");
+              "CHARGE is the second knob of the USB section, showing AUTO");
         check(!strcmp(cart_charge_hint(), "NOW OFF"), "menu hint: the charger is held off now");
         ui.menu = 1; ui.menu_sel = MI_CHARGE; ui.force = 1; frame(); ppm("cartridge-menu-charge-auto");
         mi_set(MI_CHARGE, 1);
@@ -401,9 +562,12 @@ int main(int argc, char **argv)
         cart_charge_boot();
         check(cart_keep.boot_en == 1 && !cart_keep.off && host_chg_writes == w, "power-on ignores a stale record");
         cart_keep.magic = 0; host_chg_en = 0;         /* the SoC booted with the charger already off */
-        cart_charge_boot(); cart_service(1);
-        check(cart.online && !cart_keep.boot_en && host_chg_en == 0 && host_chg_writes == w &&
-              !strcmp(cart_charge_hint(), "BOOT OFF"), "booted with the charger off: AUTO writes nothing, hint BOOT OFF");
+        cart_charge_on = 1;                             /* (CHARGE as every start sets it) */
+        cart_charge_boot();
+        check(!cart_keep.boot_en && host_chg_en == 0 && host_chg_writes == w, "booted with the charger off: read as off");
+        cart_service(1);
+        check(cart.online && host_chg_en == 1 && cart_keep.boot_en == 1 && !cart_keep.off && !cart_charge_hint()[0] &&
+              host_chg_writes == w + 1u, "booted with the charger off: the start's ON turns it back on");
     }
     return fails ? 1 : 0;
 }

@@ -67,6 +67,9 @@ void fm1_alnk0_irq(void)                       /* via isr_alnk0 (hal/fm1_isr.S) 
         uac_render_start();
         usb_full_now = (uint8_t)(usb_full && uac.feed);  /* menu USB AUDIO = FULL, while the computer records */
 #endif
+#if FELUCCA_UAC_RX
+        uac_rx_burst();                                 /* the USB return's rate loop reads its occupancy now */
+#endif
         for (b = 0; b < HALF_FRAMES; b += CTL)
             audio_block(o + 2u * b, CTL);
         fm1_audio_ack_half();

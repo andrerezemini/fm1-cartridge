@@ -181,6 +181,9 @@ static volatile uint32_t so_w, so_r;
 #define MQ 64u
 static uint32_t midi_in_q[MQ], midi_out_q[MQ];
 static volatile uint32_t mi_w, mi_r, mo_w, mo_r;
+#if FELUCCA_CARTRIDGE
+static uint16_t mo_lost;                           /* channels with a note-off dropped on a full ring (audio ISR only) */
+#endif
 static void midi_out_event(uint32_t pkt)            /* from the audio ISR */
 {
     if (usb.config && mo_w - mo_r < MQ) {
@@ -192,7 +195,23 @@ static void midi_out_event(uint32_t pkt)            /* from the audio ISR */
         RING_PUBLISH();
         mo_w++;
     }
+#if FELUCCA_CARTRIDGE
+    else if (usb.config && (pkt & 0xfu) == 8u)         /* a note-off the full ring lost: the cartridge would hold it */
+        mo_lost |= (uint16_t)(1u << ((pkt >> 8) & 15u));
+#endif
 }
+#if FELUCCA_CARTRIDGE
+/* each block (seq.c cart_tracks_block): an All Notes Off for every channel that lost a note-off, once there is room */
+static void midi_out_lost_flush(void)
+{
+    uint32_t ch;
+    for (ch = 0; mo_lost && ch < 16u; ch++)
+        if (((mo_lost >> ch) & 1u) && usb.config && mo_w - mo_r < MQ) {
+            mo_lost &= (uint16_t)~(1u << ch);
+            midi_out_event(0x0Bu | (0xB0u | ch) << 8 | 123u << 16);
+        }
+}
+#endif
 
 /* ------------------------------------------------------- descriptors --- */
 /* interfaces: 0 audio control, 1 MIDI streaming, 2 audio streaming (FELUCCA_UAC), then CDC's two.
