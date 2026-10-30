@@ -165,6 +165,8 @@ go into [BENCH_TESTS.md](docs/BENCH_TESTS.md).
 
 ## Hardware and limits
 
+<p align="center"><img src="hardware/photos/prototype-board.jpg" alt="The cartridge: an ESP32-S3 Super Mini on its LiPo cell, with the SPDT switch at the top and the USB-C male-to-male adapter at the bottom" width="320"></p>
+
 The prototype is an ESP32-S3 Super Mini on a protected 1S LiPo, with an SPDT switch on BAT+,
 insulation and a small case, plugged into the FM-1 through a USB-C male-to-male adapter
 ([BOM, photos and power notes](hardware/README.md)). The cartridge has no step-up converter and

@@ -49,10 +49,11 @@ into the FM-1's USB-C port through a rigid USB-C male-to-male adapter. The FM-1 
 CARTRIDGE page linked to the cartridge (FELUCCA OK), with the ANALOG engine, the SAW LEAD preset
 and the MIDI CH parameter on the first three knobs.*
 
-![The Super Mini board on its cell](photos/prototype-board.jpg)
+![The cartridge: the Super Mini on its cell, with the switch and the USB-C adapter](photos/prototype-board.jpg)
 
-*The Super Mini on the cell, seen from the USB-C end: the BOOT button, the 5V, GND, 3V3 and BAT
-pads and the RX/TX pins sit around the connector, and the cell's leads leave from the top.*
+*The cartridge on its own. The Super Mini sits on the LiPo pouch cell, the SPDT slide switch on
+BAT+ stands at the top end of the cell with the cell's leads routed to it, and the rigid USB-C
+male-to-male adapter plugs into the board's port at the bottom.*
 
 This is a bench assembly, not a finished cartridge. With the rigid adapter, the weight of the board
 and the cell rests on the FM-1's port ([Mechanics](#mechanics)).
