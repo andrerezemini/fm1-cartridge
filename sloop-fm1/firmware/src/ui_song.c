@@ -2,7 +2,7 @@
 /* Compact 240 x 240 song-order editor. All changes and flash saves require
  * stopped transport. The four existing project slots are sections A..D. */
 static uint8_t song_cursor, song_store_armed, song_load_armed;
-static uint32_t song_store_deadline;
+static uint32_t song_store_t;   /* when REC or OCT+ asked for its confirmation (ms) */
 UI_SMALL static int on_song_page(void) { return !ui.home && cur_page()->scope == SC_SONG; }
 UI_SMALL static void song_sane(void)                         /* a bad chain (blank / damaged settings): defaults */
 {
@@ -21,7 +21,7 @@ UI_SMALL static void song_screen_draw(void)
     song_sane();
     uint32_t i, start = song_cursor > 3u ? song_cursor - 3u : 0u;
     static uint32_t previous;
-    static const uint16_t SC[4] = {RGB(40, 124, 255), RGB(30, 204, 112), RGB(255, 198, 24), RGB(255, 98, 26)};
+    const uint16_t *SC = TE_COL;                    /* the tracks' colours (2.7.2: your theme's, when it is on) */
     uint32_t sig = song_cursor + 17u * arrangement_enabled + 37u * song.playing +
                    71u * arrangement_clock.index + 127u * arrangement_clock.bar +
                    257u * arrangement.count + 509u * song.g[G_BPM];
@@ -111,19 +111,19 @@ UI_SMALL static void song_screen_input(uint32_t pressed, uint32_t home)
                 arrangement_enabled ^= 1u;
                 ui_message(arrangement_enabled ? "SONG MODE" : "LOOP MODE");
             } else if (b == B_OCTUP) {                   /* load: a second press within 3 s (unsaved work goes) */
-                if (song_load_armed && (int32_t)(fm1_ms - song_store_deadline) <= 0) {
+                if (song_load_armed && fm1_ms - song_store_t <= 3000u) {
                     song_load_armed = 0;
                     project_load(scene);
                 } else {
                     song_load_armed = 1;
                     song_store_armed = 0;
-                    song_store_deadline = fm1_ms + 3000u;
+                    song_store_t = fm1_ms;
                     ui_message("OCT+ AGAIN: LOAD");
                 }
             } else if (project_used(scene) &&
-                       (!song_store_armed || (int32_t)(fm1_ms - song_store_deadline) > 0)) {
+                       (!song_store_armed || fm1_ms - song_store_t > 3000u)) {
                 song_store_armed = 1;
-                song_store_deadline = fm1_ms + 3000u;
+                song_store_t = fm1_ms;
                 ui_message("REC AGAIN: REPLACE");
             } else {
                 project_save(scene);

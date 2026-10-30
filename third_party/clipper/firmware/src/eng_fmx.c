@@ -139,10 +139,13 @@ static const fmx_patch_t FMX_FACTORY[FMX_NFACTORY] = {
 };
 #undef OP
 #undef NOOP
-static const char *const N_FMX_PATCH[FMX_NSLOT] = {
+/* (fixed with SLOOP 2.8.3's port) the names end with a 0: params.c param_format counts an F_INT value's names up to
+ * it. Without it the count ran past the list into whatever came after (FM KICK, ALG past 32: a FELUCCA CRASH, the
+ * screen glitched; tests/param_names_test.c) */
+static const char *const N_FMX_PATCH[FMX_NSLOT + 1u] = {
     "F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "F11", "F12", "F13", "F14", "F15", "F16",
     "B1", "B2", "B3", "B4", "B5", "B6", "B7", "B8", "B9", "B10", "B11", "B12", "B13", "B14", "B15", "B16", "B17",
-    "B18", "B19", "B20", "B21", "B22", "B23", "B24", "B25", "B26", "B27"};
+    "B18", "B19", "B20", "B21", "B22", "B23", "B24", "B25", "B26", "B27", 0};
 static const char *const N_FMX_MODE[] = {"PM", "FM", "RING"};
 static const char *const N_FMX_FIX[] = {"RATIO", "FIX"};
 
@@ -378,7 +381,8 @@ static void fmx_note_on(track_t *t, voice_t *v)
         return;
     if (tr < NPART)
         fmx_block(t);                                /* (the patch of its sound: a note can come before a block) */
-    if (!x->live) {                                  /* a fresh voice: from rest; a retrigger keeps its phases */
+    if (!x->live || (!v->env && !v->env_out)) {      /* a fresh voice: from rest; a retrigger keeps its phases (a voice
+                                                      * given up, voice.c voice_kill, ended without fmx_done: as FM6) */
         memset(x, 0, sizeof *x);
         x->rnd = 0x9E3779B9u * ((uint32_t)v->note + 1u);
     }
@@ -386,6 +390,20 @@ static void fmx_note_on(track_t *t, voice_t *v)
     for (k = 0; k < FMX_NOP; k++)
         x->st[k] = 1;                                /* (attack: from where the envelope is) */
     x->peg = tr < NPART ? ((int32_t)fmx_cur[tr].peg - 64) * 3 * 4096 / 8 : 0;   /* +-24 semitones at 0 / 127 */
+}
+
+/* (after Clipper 1.2) UNISON (voice.c unison_spread): the voice's operators moved together by r (Q32) of a turn of its
+ * note, each by its own increment's share: the relative phases, the timbre, kept */
+static void fmx_spread(track_t *t, voice_t *v, uint32_t r)
+{
+    fmx_voice_t *x = fmx_voice(t, v);
+    uint32_t tr = (uint32_t)(t - trk), k, base;
+    if (!x || tr >= NPART)
+        return;
+    base = pitch_inc((uint32_t)clamp(v->pitch16, 0, 2047));
+    for (k = 0; k < FMX_NOP; k++)                    /* (FIX: r / base samples of its own increment; per note) */
+        x->ph[k] += fmx_eff[tr].mode[k] & FXM_FIX ? (uint32_t)(((uint64_t)r * fmx_eff[tr].ratio[k]) / (base ? base : 1u))
+                                                  : (uint32_t)(((uint64_t)r * fmx_eff[tr].ratio[k]) >> 16);
 }
 
 static int fmx_done(track_t *t, voice_t *v)

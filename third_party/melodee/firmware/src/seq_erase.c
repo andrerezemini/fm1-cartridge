@@ -7,7 +7,7 @@ static int seq_erase_active(const track_t *t)
 {
     uint32_t request = seq_erase_request, buttons = fm1_in.buttons;
     return (request >> 31) && rec_on(t) && song.seq_mode && song.sel == trk_index(t) &&
-           (request & 31u) == recording_owner(t) && seq_erase_generation == t->pattern_gen &&
+           (request & 0xFFFFu) == recording_owner(t) && seq_erase_generation == t->pattern_gen &&
            (buttons & seq_erase_button) && !(buttons & ~((request >> 16) & 0x3FFFu));
 }
 static void seq_erase_clear(step_t *st)
@@ -67,7 +67,7 @@ static void seq_erase_pass(track_t *t, uint32_t step, int entered)
     uint64_t touched = 0;
     for (uint32_t i = recording_head[recording_owner(t)]; i < RECORD_MAX;) {
         uint32_t next = recording_next[i];
-        if (recording_active(t, i) && ((recording[i].step & 63u) == step ||
+        if (recording_active(t, i) && (recorded_step(&recording[i]) == step ||
             (starting && (recording_sounding(i) || (recording_flags[i] & 1u))))) {
             recording_undo_capture(t);
             touched |= (uint64_t)1u << recording_view(t, &recording[i]);

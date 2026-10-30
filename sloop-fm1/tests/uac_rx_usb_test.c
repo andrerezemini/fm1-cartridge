@@ -97,6 +97,7 @@ static void descriptors(void)
 #endif
     CHECK(get_desc(0x100, &d, &dn)); CHECK(get_desc(0x200, &c, &n));
     CHECK(dn == 18 && d[13] == 3 + T_RX);
+    CHECK((d[12] & 15u) == 8u * (T_CAPTURE || T_RX) + (T_CDC == 1));   /* +0.08: that collection order */
     CHECK(n == le16(c+2)); CHECK(c[4] == 2 + T_CAPTURE + T_RX + 2*(T_CDC == 1));
     if (getenv("UAC_DUMP")) {
         for (uint32_t i=0;i<dn;i++) printf("%02X",d[i]); puts("");
@@ -117,8 +118,9 @@ static void descriptors(void)
             if (p[2] == 1) {
                 aclen=le16(p+5);
                 CHECK(p[0] == 9 + T_CAPTURE + T_RX && p[7] == 1 + T_CAPTURE + T_RX);
-                CHECK(p[8] == 1);
-                for (uint32_t i=0;i<(uint32_t)(T_CAPTURE+T_RX);i++) CHECK(p[9+i] == 2+i);
+                /* the audio streaming interfaces first, MIDI last (macOS up to 15 drops MIDI while it walks) */
+                for (uint32_t i=0;i<(uint32_t)(T_CAPTURE+T_RX);i++) CHECK(p[8+i] == 2+i);
+                CHECK(p[8+T_CAPTURE+T_RX] == 1);
             }
             if (p[2] == 2 && p[3] == 3) { terminal3++; CHECK(le16(p+4)==0x101 && p[7]==2 && le16(p+8)==3); }
             if (p[2] == 3 && p[3] == 4) { terminal4++; CHECK(le16(p+4)==0x301 && p[7]==3); }

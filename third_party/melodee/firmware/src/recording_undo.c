@@ -5,12 +5,13 @@
  * including when they reuse a slot formerly belonging to this pattern. The
  * audio owner allocates the bounded snapshot; no per-sample history work. */
 typedef struct {
-    recorded_note_t notes[RECORD_MAX];
-    step_t steps[NSTEP];
+    step_snapshot_t steps[NSTEP];
     motion_store_t motion;
     int16_t timing[4];
     uint32_t pattern_gen, signature;
     uint8_t valid, active, redo, track, bank, engine;
+    uint16_t note_count;
+    recorded_note_t notes[RECORD_MAX]; /* variable allocation tail */
 } recording_undo_t;
 static recording_undo_t *recording_undo_ptr;
 
@@ -30,7 +31,7 @@ static uint32_t recording_undo_signature(const track_t *t)
     uint32_t h=fnv(2166136261u,t->step,sizeof t->step),owner=recording_owner(t),k=trk_index(t);
     h=fnv(h,&t->p[P_SLEN],4u*sizeof(int16_t));
     h=fnv(h,&t->eng_req,sizeof t->eng_req);
-    for(uint32_t i=0;i<RECORD_MAX;i++)if(recording[i].vel&&(recording[i].owner&31u)==owner)
+    for(uint32_t i=0;i<RECORD_MAX;i++)if(recording[i].vel&&recorded_owner(&recording[i])==owner)
         h=fnv(h,&recording[i],sizeof recording[i]);
     for(uint32_t i=0;i<motion.count;i++)if((motion.event[i].place>>6)==k&&motion_pattern[i]==t->pattern)
         h=fnv(h,&motion.event[i],sizeof motion.event[i]);
@@ -50,15 +51,12 @@ static void recording_undo_capture(track_t *t)
         /* Only one pattern can own the slot during overlapping takes. */
         if(u->track!=trk_index(t)){recording_undo_skip|=bit;return;}
     }
-    recording_undo_ptr=resource_get(RES_RECORD_UNDO,sizeof(recording_undo_t));
+    uint32_t owner=recording_owner(t),count=note_history_count((int)owner);
+    recording_undo_ptr=resource_get(RES_RECORD_UNDO,__builtin_offsetof(recording_undo_t,notes)+note_history_bytes(count));
     u=recording_undo_ptr;
     if(!u){recording_undo_lost=1;recording_undo_skip|=bit;return;}
-    uint32_t owner=recording_owner(t);
-    for(uint32_t i=0;i<RECORD_MAX;i++){
-        if(recording[i].vel&&(recording[i].owner&31u)==owner)u->notes[i]=recording_snapshot(i);
-        else memset(&u->notes[i],0,sizeof u->notes[i]);
-    }
-    memcpy(u->steps,t->step,sizeof u->steps);
+    u->note_count=(uint16_t)count;note_history_capture(u->notes,count,(int)owner);
+    step_snapshot_save(u->steps,t->step);
     memcpy(u->timing,&t->p[P_SLEN],sizeof u->timing);
     motion_snapshot_track(t,&u->motion);
     u->track=(uint8_t)trk_index(t);u->bank=t->pattern;u->pattern_gen=t->pattern_gen;u->engine=t->eng_req;
@@ -89,33 +87,44 @@ static int recording_undo_apply(int redo)
     if(u->active||rec_on(t))return 2;
     if(u->signature!=recording_undo_signature(t))return 0;
     if(u->redo!=(uint32_t)redo)return 0;
+    /* Expansion is private history work. Refuse atomically if audio has
+     * acquired the spare capacity since this sparse snapshot was captured. */
+    recording_undo_t *grown=resource_resize(RES_RECORD_UNDO,sizeof *u);
+    if(!grown)return 4;
+    u=recording_undo_ptr=grown;note_history_expand(u->notes,u->note_count);u->note_count=RECORD_MAX;
     uint32_t owner=recording_owner(t),blocked=0,free=0;
     for(uint32_t i=0;i<RECORD_MAX;i++){
-        int other=recording[i].vel&&(recording[i].owner&31u)!=owner;
+        int other=recording[i].vel&&recorded_owner(&recording[i])!=owner;
         blocked+=u->notes[i].vel&&other;
         free+=!u->notes[i].vel&&!other;
     }
-    if(blocked>free||motion.count-motion_count(t)+u->motion.count>MOTION_MAX)return 3;
+    if(blocked>free||motion.count-motion_count(t)+u->motion.count>MOTION_MAX)goto full;
     motion_store_t current;motion_snapshot_track(t,&current);
-    if(motion_replace_track(t,&u->motion))return 3;
+    if(motion_replace_track(t,&u->motion))goto full;
     u->motion=current;
     recording_stop(t);seq_release(t);
     /* Relocate only saved events whose old slots now belong to another bank.
      * A forward free cursor keeps this scan bounded by twice RECORD_MAX. */
     uint32_t dest=0;
-    for(uint32_t i=0;i<RECORD_MAX;i++)if(u->notes[i].vel&&recording[i].vel&&(recording[i].owner&31u)!=owner){
-        while(u->notes[dest].vel||(recording[dest].vel&&(recording[dest].owner&31u)!=owner))dest++;
+    for(uint32_t i=0;i<RECORD_MAX;i++)if(u->notes[i].vel&&recording[i].vel&&recorded_owner(&recording[i])!=owner){
+        while(u->notes[dest].vel||(recording[dest].vel&&recorded_owner(&recording[dest])!=owner))dest++;
         u->notes[dest]=u->notes[i];memset(&u->notes[i],0,sizeof u->notes[i]);dest++;
     }
-    for(uint32_t i=0;i<RECORD_MAX;i++)if(u->notes[i].vel||(recording[i].vel&&(recording[i].owner&31u)==owner)){
+    for(uint32_t i=0;i<RECORD_MAX;i++)if(u->notes[i].vel||(recording[i].vel&&recorded_owner(&recording[i])==owner)){
         recorded_note_t r=recording[i];
         recording[i]=u->notes[i];u->notes[i]=r;
         memset(&recording_run[i],0,sizeof recording_run[i]);recording_flags[i]=0;
     }
-    for(uint32_t i=0;i<NSTEP;i++){step_t s=t->step[i];t->step[i]=u->steps[i];u->steps[i]=s;}
+    for(uint32_t i=0;i<NSTEP;i++){step_t s=t->step[i];t->step[i]=step_snapshot_get(&u->steps[i]);step_snapshot_put(&u->steps[i],&s);}
     for(uint32_t i=0;i<4u;i++){int16_t p=t->p[P_SLEN+i];t->p[P_SLEN+i]=u->timing[i];u->timing[i]=p;}
     t->rh_n=t->rh_ties=t->rskip_n=0;
     recording_fraction[trk_index(t)]=0;
     recording_reindex();u->redo^=1u;u->signature=recording_undo_signature(t);
+    u->note_count=(uint16_t)note_history_pack(u->notes);
+    resource_resize(RES_RECORD_UNDO,__builtin_offsetof(recording_undo_t,notes)+note_history_bytes(u->note_count));
     return 1;
+full:
+    u->note_count=(uint16_t)note_history_pack(u->notes);
+    resource_resize(RES_RECORD_UNDO,__builtin_offsetof(recording_undo_t,notes)+note_history_bytes(u->note_count));
+    return 3;
 }

@@ -15,8 +15,10 @@ static const char *const N_PD_WAVE2[] = {"-", "SAW", "SQR", "PLS", "DSIN", "SPLS
 static const char *const N_PD_LINE[] = {"MIX", "RING"};
 #include "cz_patch.h"
 static const char *const N_PD_ENV[] = {"LINK", "SPLIT"};
-static cz_patch_t cz_patch[NTRK] __attribute__((section(".pool")));
-static void cz_init(void) { for (uint32_t k = 0; k < NTRK; k++) cz_patch_init(cz_patch[k].raw); }
+static cz_patch_t cz_patch[NPART] __attribute__((section(".pool"))), cz_patch_none;
+/* track k's CZ-1 tone; a MIDI-only track's is none: read, written, never heard */
+static cz_patch_t *cz_patch_of(uint32_t k) { return k < NPART ? &cz_patch[k] : &cz_patch_none; }
+static void cz_init(void) { for (uint32_t k = 0; k <= NPART; k++) cz_patch_init(cz_patch_of(k)->raw); }
 
 /* Eight rate/target points, with explicit sustain/end. Rates are Q24 per
  * control tick. No exponential asymptote and no extra release after END. */

@@ -31,9 +31,12 @@ if(CONFIG_FM1_AUDIO_MELODEE)
     list(APPEND sources "../../synth/melodee_synth.c")
     list(APPEND includes "../../third_party/melodee/generated")
     list(APPEND ldfragments "melodee.lf")
-    # (-Wno-misleading-indentation: upstream's dense one-line style, an error under GCC's -Werror)
+    # (-Wno-misleading-indentation: upstream's dense one-line style, an error under GCC's -Werror;
+    # -Wno-maybe-uninitialized: punch.c reads its volatile effect twice, the filter it sets for the
+    # first read is the one the second uses; -Wno-array-bounds: with no MIDI-only tracks the whole
+    # pattern pool fits pattern.c's retained bank, its other bank is empty and never indexed)
     set_source_files_properties("../../synth/melodee_synth.c" PROPERTIES
-        COMPILE_OPTIONS "-fwrapv;-ffp-contract=off;-Wno-unused-function;-Wno-unused-variable;-Wno-misleading-indentation")
+        COMPILE_OPTIONS "-fwrapv;-ffp-contract=off;-Wno-unused-function;-Wno-unused-variable;-Wno-misleading-indentation;-Wno-maybe-uninitialized;-Wno-array-bounds")
 endif()
 idf_component_register(SRCS ${sources}
     INCLUDE_DIRS ${includes}

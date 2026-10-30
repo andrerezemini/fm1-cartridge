@@ -14,8 +14,8 @@ other pages keep controlling Sloop.
 
 The track on the cartridge's MIDI channel (from the reply) is the cartridge track: its notes go
 out over MIDI, its engine stays silent, it shows the cartridge's names, and PRESETS (HOME, TRACKS,
-the PRESETS page) browses the cartridge's presets across engines; its LEVEL and MUTE set the USB
-return and its meter shows it; Sloop sends the cartridge START, STOP and the clock while it answers.
+the PRESETS page) browses the cartridge's presets across engines; its LEVEL, MIDI EXPRESSION and
+MUTE set the USB return and its meter shows it; Sloop sends the cartridge START, STOP and the clock while it answers.
 See the cartridge project's `docs/CARTRIDGE.md`.
 
 The FM-1 and the ESP32 run the same protocol version, or the ESP32 a newer one, read as far as

@@ -2,7 +2,7 @@
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio) */
 /* Adapted from Felucca's metronome (1.1). Quarter notes in 4/4, with an
  * accented downbeat. A decaying sine at 1760/1320 Hz sounds only at the DAC,
- * after effects, MASTER and USB capture, with its own level. Preferences are device
+ * after effects and USB capture, with its own level scaled by MASTER. Preferences are device
  * settings; seq.c requests the regular and count-in beats. */
 enum { CLICK_OFF, CLICK_REC, CLICK_ON };
 static volatile uint8_t click_req;          /* seq.c: 1 a beat, 2 the bar's first; the next block starts it */
@@ -11,7 +11,7 @@ static volatile uint8_t click_req;          /* seq.c: 1 a beat, 2 the bar's firs
 #define CLICK_K_BEAT 6154                    /* 1320 Hz */
 #define CLICK_AMP 16384                      /* the circle's amplitude */
 static const uint16_t CLICK_GAIN[3] = {1024, 2048, 4096};   /* LOW MID HIGH, Q12: the downbeat's peak -18 / -12 / -6 dB
-                                                             * of DAC full scale (Q15), independent of MASTER */
+                                                             * of DAC full scale (Q15) at unity MASTER */
 static struct { int32_t s, c, k, env, g; } clk;
 
 /* add the click to one block of DAC samples (stereo Q15, after the master): out of line, a loop only while it sounds */
@@ -31,7 +31,7 @@ static __attribute__((noinline)) void click_render(int32_t *out, uint32_t n)
     if (clk.env <= 0)
         return;
     s = clk.s; c = clk.c; k = clk.k; env = clk.env;
-    g = clk.g;                                      /* CLICK LEVEL alone: mix MASTER may even be zero */
+    g = (clk.g * (int32_t)song.master_q12) >> 12;     /* follow MASTER each block, including a sounding tail */
     for (i = 0; i < n; i++) {
         int32_t v, l, r;
         s += (k * c) >> 15;

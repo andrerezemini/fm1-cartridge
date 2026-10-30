@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio)
  * Portions Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments */
+#include "performance_options.h"
 /* Modulation matrix: per track four slots, each SRC -> DST by AMT (-64..63), added to the fixed
  * routings (ENV DEST, LFO DEST). Runs in the audio ISR (mix.c mix_part, voice.c track_render).
  *
@@ -48,9 +49,6 @@ enum { MD_OFF, MD_PITCH, MD_CUT, MD_SHP, MD_AMP, MD_PAN, MD_RESERVED6, MD_RESERV
 _Static_assert(NELEM(N_MSRC) == MS_N && NELEM(N_MDST) == MD_N, "N_MSRC / N_MDST == MS_* / MD_*");
 _Static_assert(P_M2SRC == P_M1SRC + 3 && P_M4AMT == P_M1SRC + 11 && P_M4AMT + 1 == P_FM1_ATK, "matrix slots: 3 ids each");
 #define NMSLOT 4u
-#ifndef MELODEE_MOD_CACHE
-#define MELODEE_MOD_CACHE 1
-#endif
 #if MELODEE_MOD_CACHE
 #define MOD_BEGIN_REFERENCE mod_begin_reference
 #else
@@ -280,7 +278,7 @@ static __attribute__((noinline)) int mod_begin(track_t *t)
         if(t->p[P_M1SRC+3u*first] && (((0x1FFFFFu & ~0x3C1u)>>((uint32_t)t->p[P_M1DST+3u*first]&31u))&1u) && t->p[P_M1AMT+3u*first])break;
     if(first==NMSLOT){mod.on=0;return 0;}
     uintptr_t address=(uintptr_t)t,base=(uintptr_t)trk;
-    if(address<base || address>=base+sizeof trk || (address-base)%sizeof(track_t))return mod_begin_reference(t);
+    if(address<base || address>=base+NPART*sizeof(track_t) || (address-base)%sizeof(track_t))return mod_begin_reference(t);
     mod_route_t *r=&mod_routes[(address-base)/sizeof(track_t)];
     uint32_t changed=!r->valid || r->engine!=t->engine;
     for(uint32_t k=0;!changed && k<NMSLOT;k++)

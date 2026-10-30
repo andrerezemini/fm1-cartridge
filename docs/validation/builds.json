@@ -49,8 +49,8 @@
     {
       "profile": "clipper",
       "binary": "firmware/build-clipper/fm1_cartridge.bin",
-      "bytes": 775664,
-      "sha256": "8fb504aee749c3792c933fdcc0c2c1a7877ba644bab264dd11795a911e2cfb9f",
+      "bytes": 764896,
+      "sha256": "a296956ec1214cb937a6c2410990c337d80736e7a19c38cf66639a7afda45e1a",
       "app_slot_bytes": 1310720,
       "build_result": "passed",
       "hardware_tested": false
@@ -58,8 +58,8 @@
     {
       "profile": "clipper-4m2m",
       "binary": "firmware/build-clipper-4m2m/fm1_cartridge.bin",
-      "bytes": 771904,
-      "sha256": "8abdcd84ee2fefdebeb13530f8f10ba19e978128a44ead7ab551d8f94883b67c",
+      "bytes": 761136,
+      "sha256": "452a14d02ab066ca307418da3d04611262ead9028bc892f31e86e1816389ec4c",
       "app_slot_bytes": 1310720,
       "build_result": "passed",
       "hardware_tested": false
@@ -67,8 +67,8 @@
     {
       "profile": "felucca",
       "binary": "firmware/build-felucca/fm1_cartridge.bin",
-      "bytes": 607184,
-      "sha256": "7c3511e2aef3a5c4f9638ffe5579cde2be134c15eb31f62c17ee4835a911aa20",
+      "bytes": 608464,
+      "sha256": "22a84cb6f26d6abb28bb76e42e9439da11fddbb3a1233392e22ec2e041e49cea",
       "app_slot_bytes": 1310720,
       "build_result": "passed",
       "hardware_tested": false
@@ -76,8 +76,8 @@
     {
       "profile": "felucca-4m2m",
       "binary": "firmware/build-felucca-4m2m/fm1_cartridge.bin",
-      "bytes": 603424,
-      "sha256": "29d3bed7ac8046286c7bcd448c13ef9222fd7b9bd60ce7978899b1aa05683398",
+      "bytes": 604688,
+      "sha256": "e3c54a672cdd1dd89635969af9b19eb76864024361e4654bb396a05de026646d",
       "app_slot_bytes": 1310720,
       "build_result": "passed",
       "hardware_tested": false
@@ -85,8 +85,8 @@
     {
       "profile": "melodee",
       "binary": "firmware/build-melodee/fm1_cartridge.bin",
-      "bytes": 574928,
-      "sha256": "fe07dfc9b413321425f5c146e05fb8af8b4c98c40f9bb2fc77672326b2cbb7f1",
+      "bytes": 600304,
+      "sha256": "e2744b00853fd8ee84cae828a12e0d67b6c3a8317bd8b902352af9cbc84b9a97",
       "app_slot_bytes": 1310720,
       "build_result": "passed",
       "hardware_tested": false
@@ -94,8 +94,8 @@
     {
       "profile": "melodee-4m2m",
       "binary": "firmware/build-melodee-4m2m/fm1_cartridge.bin",
-      "bytes": 571168,
-      "sha256": "6d6b0677243131e38749c977a6fe2f640c6cbde2f803550667c8ad59e203c2b5",
+      "bytes": 596528,
+      "sha256": "eca5a003b01419e0f31370f56c5e0bbf14c84e897caafaaddbf26b6ff03f534d",
       "app_slot_bytes": 1310720,
       "build_result": "passed",
       "hardware_tested": false

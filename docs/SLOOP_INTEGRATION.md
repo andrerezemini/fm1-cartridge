@@ -1,7 +1,7 @@
 # Sloop integration
 
 **Status: code, build and native tests in place; part of the hardware validation open.**
-The FM-1 runs Sloop 2.7.1 (upstream commit `4ec1ac829fd2bdf2c571ea215fb3d62477d01220`)
+The FM-1 runs Sloop 2.8.4 (upstream commit `91f30182d9095e0ecdb43396554f2ce5a67df179`)
 with the cartridge profile. The modified tree lives in [`sloop-fm1/`](../sloop-fm1/) and is
 edited there.
 
@@ -12,10 +12,11 @@ and its [manifest](../integrations/sloop-fm1/manifest.json). The tree contains
 [`CARTRIDGE_BUILD.md`](../sloop-fm1/docs/CARTRIDGE_BUILD.md) for build, memory and tests.
 Installing the package on the FM-1, with a backup, is in [FLASHING.md](FLASHING.md).
 
-Observed on hardware: a computer recognizes the FM-1 as a stereo 44.1 kHz USB audio output and
-its tone plays through the FM-1 speaker; the ESP32's tone and Clipper notes play cleanly; the
-CARTRIDGE page shows CLIPPER OK; installing the package with Sloop's updater keeps the FM-1's
-projects, settings and presets, as a backup before and after shows. Not yet verified on hardware: USB stereo
+Observed on hardware with the package built on Sloop 2.7.1 (the 2.8.4 package is built and tested
+natively, not yet installed on the FM-1): a computer recognizes the FM-1 as a stereo 44.1 kHz USB
+audio output and its tone plays through the FM-1 speaker; the ESP32's tone and Clipper notes play
+cleanly; the CARTRIDGE page shows CLIPPER OK; installing the package with Sloop's updater keeps the
+FM-1's projects, settings and presets, as a backup before and after shows. Not yet verified on hardware: USB stereo
 L/R, latency, the resampler's cost, long-session stability, capture together with playback, and
 the charger control on the SoC.
 
@@ -29,7 +30,7 @@ the charger control on the SoC.
 | Playback | IF `2 + FELUCCA_UAC`, alt0 no bandwidth, alt1 ISO OUT 0x04 |
 | Format | Stereo PCM16LE, 44,100 Hz, up to 180 bytes per 1 ms |
 | Synchronization | Adaptive (`bmAttributes=0x09`), no feedback endpoint |
-| AudioControl | Input Terminal 3 USB streaming → Output Terminal 4 speaker |
+| AudioControl | Input Terminal 3 USB streaming → Output Terminal 4 speaker; the header's collection lists the streaming interfaces before MIDI, as upstream does for macOS up to 15; bcdDevice 4.08 |
 | Rate | EP0 accepts only 44,100; the capture control is independent |
 | DMA | Own RX slot on EP4, aligned buffer of 1,028 bytes |
 
@@ -37,7 +38,8 @@ Optional capture stays at 0x84; CDC is shifted after the audio interfaces.
 There is no EP5. The tests cover descriptors and EP0 in 24 configurations of RX,
 capture, CDC and rate; duplex and CDC on the hardware still need testing.
 The dedicated profile's configuration exported over EP0 is 175 bytes and is
-in `tests/sloop_cartridge_descriptor.h`, tested by the parser used on the ESP32.
+in `tests/sloop_cartridge_descriptor.h`, tested by the parser used on the ESP32, which does not
+depend on the collection's order.
 The cartridge frames follow `firmware/src/cartridge_wire.h`, byte-identical to
 `core/include/fm1/cartridge_wire.h` ([CARTRIDGE.md](CARTRIDGE.md)).
 
@@ -61,7 +63,7 @@ used inside the FM-1 ISR. Musical quality and the ASRC's cost on the target are 
 The return enters once on core 0, after summing the cores, before texture,
 global effects, master and limiter. It does not feed per-track sends.
 **HOME → USB → USB RETURN** sets OFF–100% with knob 1; OCT+ mutes and brings back the level it
-had. The cartridge track's LEVEL and MUTE scale the return too. Every start and re-prime fades in
+had. The cartridge track's LEVEL, MIDI EXPRESSION (CC 11) and MUTE scale the return too. Every start and re-prime fades in
 over 5.8 ms, and gain changes glide over a block.
 **CHARGE** (knob 2) leaves the FM-1's internal charger as the boot set it (ON, the default) or
 holds it off while the cartridge answers (AUTO).
@@ -76,10 +78,10 @@ The diagnostic build shows receiver counters in the CARTRIDGE footer
 
 ## Memory and validation
 
-Upstream and the cartridge profile build with the same toolchain. Upstream 2.7.1 leaves
-3,644 B free in the app image; the cartridge profile disables USB capture and the CDC console
-to make room for the receiver. It uses 581,096 of 581,564 bytes of the app image, with **468 B
-free**. Main RAM: 60,892 B; low RAM: 22,772 B; pool: 333,900 B,
+Upstream and the cartridge profile build with the same toolchain. Upstream 2.8.4 leaves
+9,788 B free in the app image; the cartridge profile disables USB capture and the CDC console.
+It uses 574,044 of 581,564 bytes of the app image, with **7,520 B free** (the diagnostic build
+6,736 B; with capture as well, 772 B). Main RAM: 61,292 B; low RAM: 22,772 B; pool: 333,900 B,
 preserving 10,164 B free (minimum of 8,192 B). The package
 is built at `build/felucca.fwsc` in `sloop-fm1/`.
 

@@ -4,15 +4,20 @@
 #ifndef MELODEE_BATCH_AUDIO
 #define MELODEE_BATCH_AUDIO 1
 #endif
-/* Twelve bounded descriptors, flushed before reuse. Only voice sample work
- * runs on CPU1; events and control preparation remain on CPU0. Each job owns
- * PCM scratch, so two voices never concurrently add to the same destination. */
+/* Twenty-four bounded descriptors, flushed before reuse. Per-voice synthesis
+ * and inactive FM6 updates share the workers; events and part-wide control
+ * preparation remain on CPU0. Private PCM preserves addition order. */
 typedef void (*audio_batch_fn)(const void *,int32_t *);
-/* The largest current descriptor is Prophet (168 bytes on the 64-bit host);
- * assertions at each producer bound the slots on both platforms. Twelve slots
- * keep an eight-voice part and its drums in one parallel group. */
+/* Prophet is largest: 148 bytes on FM-1, 168 on the 64-bit host. Producer
+ * assertions enforce both bounds. Keep host pointers/alignment intact while
+ * target slots avoid reserving space for pointers twice their size. */
+#ifdef FM1_IRQ_TARGET
+#define AUDIO_BATCH_BYTES 148u
+#else
 #define AUDIO_BATCH_BYTES 168u
-#define AUDIO_BATCH_JOBS 12u
+#endif
+#define AUDIO_BATCH_JOBS 24u
+_Static_assert(AUDIO_BATCH_JOBS<=32u,"Batch worker mask must cover every descriptor");
 typedef struct {
     audio_batch_fn run;int32_t *out;uint32_t n, profile_id,guard;
 #if MELODEE_AUDIO_PROFILE
@@ -20,7 +25,9 @@ typedef struct {
 #endif
     uint32_t data[AUDIO_BATCH_BYTES/4u] __attribute__((aligned(8)));int32_t pcm[CTL];
 } audio_batch_job_t;
-static audio_batch_job_t audio_batch_jobs[AUDIO_BATCH_JOBS] __attribute__((section(".audio_scratch"),aligned(32)));
+/* Keep the larger queue in ordinary POOL SRAM. Retained scratch has room for
+ * the old twelve descriptors only; every descriptor is filled before use. */
+static audio_batch_job_t audio_batch_jobs[AUDIO_BATCH_JOBS] __attribute__((section(".pool"),aligned(32)));
 static uint32_t audio_batch_count, audio_batch_pairs;
 static uint8_t audio_batch_active;
 /* TIMER5 preempts CPU0 only. Partition a group around measured kernel
@@ -42,11 +49,10 @@ static const uint32_t audio_batch_cost[AP_COUNT] __attribute__((section(".dsp_ta
 #endif
 static volatile uint32_t audio_batch_worker_mask,audio_batch_published,audio_batch_closed,audio_batch_invalid;
 static uint32_t audio_batch_producer_cost,audio_batch_worker_cost;
-static uint8_t audio_batch_started,audio_batch_fm6_controls;
-/* CPU0 prepares every descriptor and services TIMER5 while CPU1 renders.
- * Reserve at least one kernel's cost: a fixed 2000 under-reserved Prophet
- * and CZ work, leaving CPU0 late while CPU1 finished early. Cheaper kernels
- * retain the previous allowance. Lab builds can compare explicit splits. */
+static uint8_t audio_batch_started,audio_batch_native_fm6;
+/* CPU0 prepares descriptors and services TIMER5 while CPU1 synthesizes.
+ * Reserve service time when splitting kernels. Native FM6 ghost groups
+ * contribute their own bounded state-update cost. */
 #define AUDIO_BATCH_SERVICE_AUTO UINT32_MAX
 #if MELODEE_AUDIO_PROFILE && MELODEE_AUDIO_BENCH
 static volatile uint32_t audio_batch_service_allowance=AUDIO_BATCH_SERVICE_AUTO;
@@ -86,6 +92,10 @@ static void audio_batch_parallel(void *context)
             if(AB_LOAD(&audio_batch_worker_mask)&(1u<<k))audio_batch_worker(&audio_batch_jobs[k]);
         }
         if(AB_LOAD(&audio_batch_closed) && done==AB_LOAD(&audio_batch_published))return;
+#ifdef FM1_IRQ_TARGET
+        /* Yield the SRAM bus while CPU0 prepares the next descriptors. */
+        fm1_aw_relax();
+#endif
     }
 }
 static __attribute__((noinline)) void audio_batch_flush(void)
@@ -138,7 +148,7 @@ static __attribute__((noinline)) void audio_batch_flush(void)
     }
     audio_batch_count=0;
 }
-static void audio_batch_push(audio_batch_fn run,const void *data,uint32_t bytes,int32_t *out,uint32_t n,uint32_t profile_id)
+static void audio_batch_push_cost(audio_batch_fn run,const void *data,uint32_t bytes,int32_t *out,uint32_t n,uint32_t profile_id,uint32_t estimated_cost)
 {
     if(audio_batch_count==AUDIO_BATCH_JOBS)audio_batch_flush();
     AP_START(prepare_start);
@@ -146,10 +156,16 @@ static void audio_batch_push(audio_batch_fn run,const void *data,uint32_t bytes,
     j->run=run;j->out=out;j->n=n;j->profile_id=profile_id;memcpy(j->data,data,bytes);
     j->guard=(uint32_t)(uintptr_t)run^n^profile_id^0x913ab267u;
 #if MELODEE_DUAL_CORE
-    uint32_t cost=audio_batch_cost[profile_id];
+    uint32_t cost=estimated_cost;
     if(!k){
         AB_STORE(&audio_batch_published,0u);AB_STORE(&audio_batch_worker_mask,0u);AB_STORE(&audio_batch_closed,0u);AB_STORE(&audio_batch_invalid,0u);
-        uint32_t service=profile_id==AP_PROPHET && audio_batch_fm6_controls?6000u:2000u;
+        /* Voice and native ghost controls now travel with queue jobs.
+         * Reserve CPU0 service work; their costs participate in the split. */
+        uint32_t service=2000u;
+        if(audio_batch_native_fm6){
+            if(profile_id==AP_PROPHET)service=6000u;
+            else if(profile_id==AP_FM6 || profile_id==AP_FM6_CONTROL)service=6000u;
+        }
         audio_batch_worker_cost=0;audio_batch_producer_cost=cost>service?cost:service;
 #if MELODEE_AUDIO_PROFILE && MELODEE_AUDIO_BENCH
         if(audio_batch_service_allowance!=AUDIO_BATCH_SERVICE_AUTO)audio_batch_producer_cost=audio_batch_service_allowance;
@@ -165,4 +181,9 @@ static void audio_batch_push(audio_batch_fn run,const void *data,uint32_t bytes,
     if(!k)audio_batch_started=(uint8_t)audio_worker_submit(audio_batch_parallel,0);
 #endif
     AP_END(AP_BATCH_PREPARE,prepare_start);
+}
+
+static void audio_batch_push(audio_batch_fn run,const void *data,uint32_t bytes,int32_t *out,uint32_t n,uint32_t profile_id)
+{
+    audio_batch_push_cost(run,data,bytes,out,n,profile_id,audio_batch_cost[profile_id]);
 }

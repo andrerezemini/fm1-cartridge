@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio) */
+#include "performance_options.h"
 /* Prophet prototype: native patches and five (experimental dual-core: eight) voices, with two provisional
  * filter characters. Stored engine ID 19 is independent of legacy ANALOG.
  * MELODEE_PROPHET_PROTOTYPE additionally aliases ID 0 for measurement rigs. */
@@ -87,12 +88,12 @@ static int32_t p5_value(const uint8_t *p,uint32_t k) { return p[k]>127u?127:p[k]
 /* Linear attack, exponential decay/release; the SSM filter envelope uses
  * its measured linear decay. Float avoids an integer floor in quiet tails. */
 static float p5_env_tick(p5_env_t *e, int gate, const uint8_t *p,
-                        uint32_t a, uint32_t d, uint32_t s, uint32_t r, int32_t variation, const uint8_t *value, int ssm)
+                        uint32_t a, uint32_t d, uint32_t s, uint32_t r, int32_t variation, const uint8_t *value, int ssm, uint32_t release)
 {
     if (!gate && e->stage != 0u) e->stage = 3;
     float target = (float)value[s] * (1.0f / 127.0f);
     float scale = 1.0f + (float)variation * (1.0f / 32768.0f);
-    uint32_t rel = p[P5_RELEASE_ON] ? value[r] : 16u;
+    uint32_t rel = release ? release : p[P5_RELEASE_ON] ? value[r] : 16u;
     if (e->stage == 1u) {
         e->value += P5_ENV_ATK[value[a]] * scale;
         if (e->value >= 1.0f) { e->value = 1.0f; e->stage = 2; }
@@ -175,9 +176,6 @@ static inline __attribute__((always_inline)) float p5_pitch_ratio(float x)
     fm_bits_t scale;scale.u=(uint32_t)(octave+127)<<23;
     return ratio*scale.f;
 }
-#ifndef MELODEE_PROPHET_FAST
-#define MELODEE_PROPHET_FAST 1
-#endif
 /* Rev-4 full-amount triangle swings +-235 cents. Shared by every voice. */
 static __attribute__((section(".dsp_text"))) void p5_mod_samples(p5_part_t *s,const uint8_t *p,uint32_t inc,float amount,float mix)
 {
@@ -355,10 +353,13 @@ static inline __attribute__((always_inline)) uint32_t p5_wheel_inc(uint32_t base
 static __attribute__((section(".dsp_text"))) void p5_samples(p5_voice_t *restrict s,const uint8_t *restrict p,int32_t *restrict out,uint32_t n,const vmod_t *m,const p5_render_params_t *c)
 {
     int32_t last=0;
-    uint32_t fixed_pw_b=p5_pw(c->pwm_b);
+    /* Oscillators do not depend on filter state. Separate the passes to
+     * reduce register pressure while retaining each sample's arithmetic. */
+    float inputs[CTL*P5_OVERSAMPLE],cuts[CTL*P5_OVERSAMPLE];
+    uint32_t fixed_pw_b=p5_pw(c->pwm_b),fixed_pw_a=p5_pw(c->pwm_a);
     for(uint32_t i=0;i<n;i++){
         float time=(float)i*(1.0f/CTL);
-        float fe=c->f0+(c->f1-c->f0)*time,ae=c->a0+(c->a1-c->a0)*time,sum=0.0f;
+        float fe=c->f0+(c->f1-c->f0)*time;
         for(uint32_t os=0;os<P5_OVERSAMPLE;os++){
             float noise=(float)(noise32(&s->noise)>>8)*(1.0f/16777216.0f)-0.5f;
             float lfo=c->wheel[i*P5_OVERSAMPLE+os],wheel_pitch=c->wheel_pitch[i*P5_OVERSAMPLE+os];
@@ -367,7 +368,7 @@ static __attribute__((section(".dsp_text"))) void p5_samples(p5_voice_t *restric
             float bn=b*2.0f;
             uint32_t da=p[P5_POLY_FREQ]?p5_inc(c->ia,fe*c->pa_env+bn*c->pa_b):c->ia;
             if(p[P5_WHEEL_FREQ_A])da=p5_wheel_inc(da,wheel_pitch);
-            uint32_t pw=p5_pw(c->pwm_a+(p[P5_POLY_PW]?fe*c->pw_env+b*c->pw_b:0.0f)+(p[P5_WHEEL_PW_A]?lfo:0.0f));
+            uint32_t pw=!(p[P5_POLY_PW] || p[P5_WHEEL_PW_A])?fixed_pw_a:p5_pw(c->pwm_a+(p[P5_POLY_PW]?fe*c->pw_env+b*c->pw_b:0.0f)+(p[P5_WHEEL_PW_A]?lfo:0.0f));
             float unused=0.0f;
             float a=p5_wave(s->phase[0],da,pw,p[P5_SAW_A],p[P5_PULSE_A],0,&unused)+s->sync_tail;
             s->sync_tail=0.0f;
@@ -386,8 +387,15 @@ static __attribute__((section(".dsp_text"))) void p5_samples(p5_voice_t *restric
             float fc=c->cut+fe*c->filter_velocity*c->env_amount;
             if(p[P5_POLY_FILTER])fc+=fe*c->pf_env+bn*c->pf_b;
             if(p[P5_WHEEL_FILTER])fc+=lfo*112.0f;
-            sum+=p5_filter_core(s,p5_fast_softclip(x),fc,c->k,c->filter_gain,!!p[P5_FILTER_REV]);
+            inputs[i*P5_OVERSAMPLE+os]=p5_fast_softclip(x);
+            cuts[i*P5_OVERSAMPLE+os]=fc;
         }
+    }
+    for(uint32_t i=0;i<n;i++){
+        float time=(float)i*(1.0f/CTL);
+        float ae=c->a0+(c->a1-c->a0)*time,sum=0.0f;
+        for(uint32_t os=0;os<P5_OVERSAMPLE;os++)
+            sum+=p5_filter_core(s,inputs[i*P5_OVERSAMPLE+os],cuts[i*P5_OVERSAMPLE+os],c->k,c->filter_gain,!!p[P5_FILTER_REV]);
         sum*=1.0f/P5_OVERSAMPLE;
         float gain=ae*c->amp_velocity*(1.0f+(float)s->amp_drift/32768.0f);
         float amp=((float)m->amp0+(float)(m->amp1-m->amp0)*time)*(1.0f/32768.0f);
@@ -492,8 +500,8 @@ static void p5_render(track_t *t, voice_t *v, int32_t *out, uint32_t n, const vm
     const uint8_t *q=part->value;
     float f0=s->filter_prev, a0=s->amp_prev;
     int curtis=!!p[P5_FILTER_REV];
-    float f1=p5_env_tick(&s->filter,v->gate,p,P5_ATTACK_FILTER,P5_DECAY_FILTER,P5_SUSTAIN_FILTER,P5_RELEASE_FILTER,s->env_drift,q,!curtis);
-    float a1=p5_env_tick(&s->amp,v->gate,p,P5_ATTACK_AMP,P5_DECAY_AMP,P5_SUSTAIN_AMP,P5_RELEASE_AMP,s->env_drift,q,0);
+    float f1=p5_env_tick(&s->filter,v->gate,p,P5_ATTACK_FILTER,P5_DECAY_FILTER,P5_SUSTAIN_FILTER,P5_RELEASE_FILTER,s->env_drift,q,!curtis,midi_verb[t-trk]);
+    float a1=p5_env_tick(&s->amp,v->gate,p,P5_ATTACK_AMP,P5_DECAY_AMP,P5_SUSTAIN_AMP,P5_RELEASE_AMP,s->env_drift,q,0,midi_verb[t-trk]);
     s->filter_prev=f1; s->amp_prev=a1;
     int32_t glide=0;
     if(p[P5_GLIDE]){

@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio)
  * Portions Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments */
+#include "performance_options.h"
 /* FM6 core: six-operator FM that renders DX7 voices with native fp32 signal arithmetic.
  *
  * The synthesis is Dexed's (Pascal Gauthier; on MSFA by Raph Levien, Google), restated in C: ENGINE (the FM6
@@ -20,9 +21,6 @@
 
 #include "x0x/fastmath.h"
 
-#ifndef MELODEE_FM6_FAST
-#define MELODEE_FM6_FAST 1
-#endif
 
 /* the 155-byte patch: 6 x 21 operator bytes (the sixth operator first), then the voice */
 enum {
@@ -138,8 +136,8 @@ static uint32_t fm6_carriers(uint32_t a)
 static inline __attribute__((always_inline)) int32_t fm6_freq(int32_t lf)
 {
     uint32_t i=((uint32_t)lf&0xFFFFFFu)>>14,f=(uint32_t)lf&0x3FFFu;
-    uint32_t delta=(uint32_t)(FM6_FREQ[i+1u]-FM6_FREQ[i]);
-    int32_t y=FM6_FREQ[i]+(int32_t)((delta*(f>>7)+((delta*(f&127u))>>7))>>7);
+    uint32_t delta=(uint32_t)(fm6_freq_point(i+1u)-fm6_freq_point(i));
+    int32_t y=fm6_freq_point(i)+(int32_t)((delta*(f>>7)+((delta*(f&127u))>>7))>>7);
     int32_t sh=20-(lf>>24);
     return sh<=0?y:sh>31?0:y>>sh;
 }
@@ -280,6 +278,12 @@ static __attribute__((noinline,section(".dsp_text"))) int32_t fm6_eg_step(fm6_eg
 
 static inline __attribute__((always_inline)) int32_t fm6_eg_step_run(fm6_eg_t *e, const uint8_t *op, int32_t ol, int32_t rs, int down)
 {
+#if MELODEE_FM6_FAST
+    /* Sustained and finished operators have no state transition. Avoid the
+     * far RAM call, while static holds still consume their exact samples. */
+    if (e->ix >= 3u && !e->hold && (e->ix >= 4u || down))
+        return e->level;
+#endif
     int32_t (*volatile run)(fm6_eg_t *, const uint8_t *, int32_t, int32_t, int) = fm6_eg_step;
     return run(e, op, ol, rs, down);
 }
@@ -349,6 +353,7 @@ typedef struct fm6_voice {                               /* a voice; operators i
     uint8_t down, sub, note, vel, eng, loop, fbs, quiet, played;
     uint8_t frozen;                                      /* stopped as by Dexed's panic: not kept running */
     uint8_t still;                                       /* over and at rest: 1 only time goes on, 2 nothing matters */
+    uint8_t midi_release;                                /* uses the former alignment byte; restore native R4 on bypass */
     int32_t spb;                                         /* the bend and tune it was at rest with */
 } fm6_voice_t;
 #define FM6_SILENT 1638400                               /* an envelope level no engine renders (MARK I: -96 dB) */
@@ -361,7 +366,9 @@ static float fm6_bus[2][CTL], fm6_sum[CTL];
  * As in Dexed the sum is 16 bits, the sign its top bit (a gain ramp that overshoots wraps it) */
 static inline __attribute__((always_inline)) int32_t fm6_mki(int32_t ph, int32_t env)
 {
-    uint32_t e = ((uint32_t)FM6_MKI_LOG[((uint32_t)ph >> 12) & 2047u] + (((uint32_t)ph >> 8) & 0x8000u) + (uint32_t)env) &
+    /* The ROM's other quarter is its exact reflection. */
+    uint32_t i=((uint32_t)ph>>12)&2047u;if(i&1024u)i^=2047u;
+    uint32_t e = ((uint32_t)FM6_MKI_LOG[i] + (((uint32_t)ph >> 8) & 0x8000u) + (uint32_t)env) &
                  0xFFFFu;
     int32_t y = (int32_t)(((uint32_t)FM6_MKI_EXP[e & 0x3FFu] >> ((e & 0x7FFFu) >> 10)) << 13);
     return e & 0x8000u ? -y - 8192 : y;
@@ -370,7 +377,8 @@ static inline __attribute__((always_inline)) int32_t fm6_mki(int32_t ph, int32_t
 /* OPL: the OPL's quarter-wave ROMs (oplSin); env: attenuation, 8 a step of 3/8 dB; 16 bits as above */
 static inline __attribute__((always_inline)) int32_t fm6_opl(int32_t ph, int32_t env)
 {
-    uint32_t e = ((uint32_t)FM6_OPL_LOG[((uint32_t)ph >> 14) & 511u] + (((uint32_t)ph >> 8) & 0x8000u) +
+    uint32_t i=((uint32_t)ph>>14)&511u;if(i&256u)i^=511u;
+    uint32_t e = ((uint32_t)FM6_OPL_LOG[i] + (((uint32_t)ph >> 8) & 0x8000u) +
                   ((uint32_t)env << 3)) & 0xFFFFu, sh = (e & 0x7FFFu) >> 8;
     int32_t y = sh > 31u ? 0 : (int32_t)((uint32_t)FM6_OPL_EXP[e & 0xFFu] >> sh);
     return (e & 0x8000u ? -y - 1 : y) * (1 << 14);
@@ -393,6 +401,45 @@ static inline __attribute__((always_inline)) int32_t fm6_opl(int32_t ph, int32_t
             }                                                                                      \
     } while (0)
 #define FM6_SIN_G(x) (fm6_sin(x) * g)
+#if MELODEE_FM6_FAST
+/* A settled MODERN gain needs no recurrence. Preserve the first addition
+ * (including signed zero) and vectorize the independent phase evaluations. */
+static __attribute__((noinline,section(".dsp_text"))) void fm6_op_modern_flat(fm6_voice_t *s,uint32_t k,float *out,const float *in,int add,uint32_t n)
+{
+    uint32_t ph=s->ph[k],fq=(uint32_t)s->fq[k];
+    float g=n?s->g[k]+s->dg[k]:s->g[k];
+#define FM6_FLAT(Y) do { \
+    if(add)for(uint32_t i=0;i<n;i++){out[i]+=(Y);ph+=fq;} \
+    else for(uint32_t i=0;i<n;i++){out[i]=(Y);ph+=fq;} \
+}while(0)
+    if(in)FM6_FLAT(fm6_sin(fm6_phase(ph,in[i]))*g);
+    else FM6_FLAT(fm6_sin(ph&0xffffffu)*g);
+#undef FM6_FLAT
+    s->ph[k]=ph;s->g[k]=g;
+}
+/* The MARK I plan produces integral attenuation and steps, including wrapped
+ * overshoots. Keep its register allocation separate from the other modes. */
+static __attribute__((noinline,section(".dsp_text"))) void fm6_op_mark1(fm6_voice_t *s,uint32_t k,float *out,const float *in,int add,uint32_t n)
+{
+    uint32_t ph=s->ph[k],fq=(uint32_t)s->fq[k],i;
+    int32_t g=(int32_t)s->g[k],dg=(int32_t)s->dg[k];
+    /* Above 13 octaves of attenuation, every exponent ROM value shifts
+     * to zero. Preserve the negative half's -1 code, rather than replacing
+     * this with silence. Bound the whole ramp to exclude envelope wrap. */
+    int32_t first=g+dg,last=g+(int32_t)n*dg;
+    int32_t lo=first<last?first:last,hi=first>last?first:last;
+    if(lo>=13*1024 && hi<32768-(int32_t)FM6_MKI_LOG[0]){
+        if(in)
+            FM6_LOOP((fm6_phase(ph,in[i])&0x800000u)?-1.0f/2048.0f:0.0f);
+        else
+            FM6_LOOP((ph&0x800000u)?-1.0f/2048.0f:0.0f);
+    }else if(in)
+        FM6_LOOP((1.0f/16777216.0f)*fm6_mki((int32_t)fm6_phase(ph,in[i]),g));
+    else
+        FM6_LOOP((1.0f/16777216.0f)*fm6_mki((int32_t)(ph&0xffffffu),g));
+    s->ph[k]=ph;s->g[k]=(float)g;
+}
+#endif
 static __attribute__((section(".dsp_text"))) void fm6_op(fm6_voice_t *s, uint32_t k, float *out, const float *in, int add, uint32_t eng, uint32_t n)
 {
     uint32_t ph = s->ph[k], i, fq = (uint32_t)s->fq[k];
@@ -576,6 +623,16 @@ static __attribute__((noinline, section(".dsp_text"))) void fm6_run(fm6_voice_t 
             fm6_op_loop(s, out, n);
         else if (pl & FM6_P_FB)
             fm6_op_fb(s, k, out, pl & FM6_P_ADD, eng, n);
+#if MELODEE_FM6_FAST
+        else if(eng==FM6_MODERN && s->dg[k]==0.0f){
+            void (*volatile run)(fm6_voice_t *,uint32_t,float *,const float *,int,uint32_t)=fm6_op_modern_flat;
+            run(s,k,out,in?bus[in-1u]:0,pl&FM6_P_ADD,n);
+        }
+        else if(eng==FM6_MARK1){
+            void (*volatile run)(fm6_voice_t *,uint32_t,float *,const float *,int,uint32_t)=fm6_op_mark1;
+            run(s,k,out,in?bus[in-1u]:0,pl&FM6_P_ADD,n);
+        }
+#endif
         else
             fm6_op(s, k, out, in ? bus[in - 1u] : 0, pl & FM6_P_ADD, eng, n);
     }

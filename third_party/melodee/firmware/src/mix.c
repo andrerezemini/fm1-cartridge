@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio)
  * Portions Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments */
+#include "performance_options.h"
 /* Engine output -> optional stereo insert -> track level -> master.
  * The bypass retains the original level/pan/spread path exactly. */
 #include "fx.c"
@@ -76,6 +77,8 @@ static uint32_t division_samples(uint32_t quarter, uint32_t div)
 }
 static uint32_t div_samples(uint32_t div) { return division_samples(beat_samples(), div); }
 
+#include "punch.c"
+
 /* External sequencing uses musical units, independent of the measured tempo.
  * 24 clocks/beat and every division divide exactly; tempo estimates only set
  * LFO timing and the display, never move an already recorded step. */
@@ -94,7 +97,7 @@ static void events_block(uint32_t n);
 #if MELODEE_USB_AUDIO
 static int ua_capture_active(void);
 static uint8_t track_capture_on;
-static int32_t track_capture[CTL * NTRK];
+static int32_t track_capture[CTL * NPART];
 #endif
 
 typedef struct {
@@ -102,10 +105,7 @@ typedef struct {
     uint8_t valid;
     int32_t lvl, gl, gr;
 } mix_cache_t;
-static mix_cache_t mix_cache[NTRK];
-#ifndef MELODEE_MIX_FAST
-#define MELODEE_MIX_FAST 1
-#endif
+static mix_cache_t mix_cache[NPART];
 static __attribute__((noinline)) void mix_cache_update(const track_t *t, mix_cache_t *mc)
 {
     mc->level=t->p[P_LEVEL];mc->pan=t->p[P_PAN];mc->valid=1;
@@ -126,7 +126,7 @@ static __attribute__((noinline)) void mix_spread(track_t *t, int32_t *b, uint32_
         int32_t y=clamp(((clamp((d[i]<<1)-b[i],-884000,884000)>>2)*lvl)>>10,-524287,524287);
         int32_t a=x<0?-x:x;
 #if MELODEE_USB_AUDIO
-        if(track_capture_on)track_capture[i*NTRK+(uint32_t)(t-trk)]=x;
+        if(track_capture_on)track_capture[i*NPART+(uint32_t)(t-trk)]=x;
 #endif
         if(a>pk)pk=a;
         mix_add(((x*glm)>>12)+((y*gld)>>12),((x*grm)>>12)+((y*grd)>>12),i,send);
@@ -145,7 +145,7 @@ static __attribute__((noinline,section(".dsp_text"))) void MIX_MONO_GENERAL(trac
     for(uint32_t i=0;i<n;i++){
         int32_t x=clamp(((clamp(b[i],-884000,884000)>>2)*lvl)>>10,-524287,524287),a=x<0?-x:x;
 #if MELODEE_USB_AUDIO
-        if(track_capture_on)track_capture[i*NTRK+(uint32_t)(t-trk)]=x;
+        if(track_capture_on)track_capture[i*NPART+(uint32_t)(t-trk)]=x;
 #endif
         if(a>pk)pk=a;
         mix_add((x*gl)>>12,(x*gr)>>12,i,send);
@@ -154,19 +154,34 @@ static __attribute__((noinline,section(".dsp_text"))) void MIX_MONO_GENERAL(trac
 }
 #undef MIX_MONO_GENERAL
 #if MELODEE_MIX_FAST
-static __attribute__((noinline,section(".dsp_text"))) void mix_mono_samples(track_t *t,int32_t *b,uint32_t n,const mix_cache_t *mc)
+/* Centered dry tracks need neither pan multiplications nor send-buffer
+ * reads/writes. Keep this loop separate from the centered-send path. */
+static __attribute__((noinline,section(".dsp_text"))) void mix_mono_dry(track_t *t,int32_t *b,uint32_t n,const mix_cache_t *mc)
 {
-    uint32_t send=fx_send_on?fx_send_gain(t):0u;
-    if(mc->pan || !send){mix_mono_general(t,b,n,mc);return;}
-    /* x is clamped to +/-524287, so unity pan multiplication is exact and
-     * cannot overflow. Equal channels also share the send's scaling work.
-     * Keep the original loop separate: duplicating it here hurts noncenter
-     * and dry host paths through register pressure and loop selection. */
     int32_t lvl=mc->lvl,pk=t->peak;
     for(uint32_t i=0;i<n;i++){
         int32_t x=clamp(((clamp(b[i],-884000,884000)>>2)*lvl)>>10,-524287,524287),a=x<0?-x:x;
 #if MELODEE_USB_AUDIO
-        if(track_capture_on)track_capture[i*NTRK+(uint32_t)(t-trk)]=x;
+        if(track_capture_on)track_capture[i*NPART+(uint32_t)(t-trk)]=x;
+#endif
+        if(a>pk)pk=a;
+        mix_l[i]+=x;mix_r[i]+=x;
+    }
+    t->peak=pk;
+}
+static __attribute__((noinline,section(".dsp_text"))) void mix_mono_samples(track_t *t,int32_t *b,uint32_t n,const mix_cache_t *mc)
+{
+    uint32_t send=fx_send_on?fx_send_gain(t):0u;
+    if(mc->pan){mix_mono_general(t,b,n,mc);return;}
+    if(!send){mix_mono_dry(t,b,n,mc);return;}
+    /* x is clamped to +/-524287, so unity pan multiplication is exact and
+     * cannot overflow. Equal channels also share the send's scaling work.
+     * Keep each loop separate to avoid register pressure in the general path. */
+    int32_t lvl=mc->lvl,pk=t->peak;
+    for(uint32_t i=0;i<n;i++){
+        int32_t x=clamp(((clamp(b[i],-884000,884000)>>2)*lvl)>>10,-524287,524287),a=x<0?-x:x;
+#if MELODEE_USB_AUDIO
+        if(track_capture_on)track_capture[i*NPART+(uint32_t)(t-trk)]=x;
 #endif
         if(a>pk)pk=a;
         mix_add(x,x,i,send);
@@ -188,47 +203,31 @@ static void mix_solo(track_t *t,int32_t *b,uint32_t n)
     }
     solo_gain[ti]=from;
 }
-static __attribute__((noinline,section(".dsp_text"))) void mix_fx_samples(track_t *t,uint32_t n)
-{
-    uint32_t ti=(uint32_t)(t-trk);int32_t lvl=LEVEL_Q12[t->p[P_LEVEL]&127],pk=t->peak;
-    uint32_t send=fx_send_on?fx_send_gain(t):0u;
-    int32_t gain=solo_gain[ti],to=!t->p[P_MUTE] && (!track_solo || ((track_solo>>ti)&1u))?32768:0;
-    for(uint32_t i=0;i<n;i++){
-        gain+=clamp(to-gain,-256,256);
-        int32_t l=fx_scale(fx_left[i],(uint32_t)gain*2u),r=fx_scale(fx_right[i],(uint32_t)gain*2u);
-        l=clamp(fx_div_pow2((l>>2)*lvl,10),-524287,524287);r=clamp(fx_div_pow2((r>>2)*lvl,10),-524287,524287);
-        mix_add(l,r,i,send);int32_t a=l<0?-l:l,c=r<0?-r:r;if(c>a)a=c;if(a>pk)pk=a;
-#if MELODEE_USB_AUDIO
-        if(track_capture_on)track_capture[i*NTRK+ti]=fx_div_pow2(l+r,1);
-#endif
-    }
-    solo_gain[ti]=gain;t->peak=pk;
-}
 #if MELODEE_BATCH_AUDIO && !MELODEE_LEGACY_EXTRAS
 static int32_t batch_pcm[NPART][CTL],batch_spread[NPART][CTL];
 static uint32_t batch_rendered[NPART];static uint8_t batch_spread_on[NPART],batch_ready;
 static __typeof__(mod) batch_mod[NPART];
 #if MELODEE_DUAL_CORE
 static uint8_t batch_posted[NPART];
-static uint32_t batch_reverb_track=NPART;
 #endif
 static int16_t batch_params[NPART][P_COUNT];
 static __attribute__((noinline)) void mix_prepare_batch(uint32_t n,uint32_t nt)   /* nt: the tracks in use */
 {
     audio_batch_active=1;
 #if MELODEE_DUAL_CORE
-    memset(batch_posted,0,sizeof batch_posted);batch_reverb_track=NPART;
-    /* Native FM6 preparation includes releasing/ghost envelopes on CPU0.
-     * This measured mixed Prophet/FM6 class needs more service allowance;
-     * do not allocate or change engine priority while inspecting it. */
-    audio_batch_fm6_controls=0;
-    for(uint32_t p=0;p<nt && !audio_batch_fm6_controls;p++)if(trk[p].engine==ENGI_FM6 && resource[RES_ENGINE0+p].size==sizeof(fm6_part_t)){
+    memset(batch_posted,0,sizeof batch_posted);
+    /* Keep the measured CPU0 service reserve for native FM6 workloads.
+     * Per-voice controls and ghosts themselves are costed queue jobs. */
+    audio_batch_native_fm6=0;
+    for(uint32_t p=0;p<nt && !audio_batch_native_fm6;p++)if(trk[p].engine==ENGI_FM6 && resource[RES_ENGINE0+p].size==sizeof(fm6_part_t)){
         const fm6_part_t *f=resource[RES_ENGINE0+p].ptr;
-        for(uint32_t v=0;v<NVOICE;v++)if(f->v[v].played && !f->v[v].still && !f->v[v].frozen){audio_batch_fm6_controls=1;break;}
+        for(uint32_t v=0;v<NVOICE;v++)if(f->v[v].played && !f->v[v].still && !f->v[v].frozen){audio_batch_native_fm6=1;break;}
     }
 #endif
     for(uint32_t p=0;p<nt;p++){
-        track_t *t=&trk[p];mod_begin(t);batch_mod[p]=mod;memcpy(batch_params[p],t->p,sizeof t->p);
+        track_t *t=&trk[p];
+        if(t->engine==ENGI_MIDI){batch_rendered[p]=0;continue;}
+        mod_begin(t);batch_mod[p]=mod;memcpy(batch_params[p],t->p,sizeof t->p);
         spread_on=t->p[P_SPRD]>0 && (trk_vmode(t)==V_POLY || trk_vmode(t)==V_UNISON);
         batch_spread_on[p]=spread_on;spread_buf=batch_spread[p];
         batch_rendered[p]=track_render_audio(t,batch_pcm[p],n,0);
@@ -239,6 +238,7 @@ static __attribute__((noinline)) void mix_prepare_batch(uint32_t n,uint32_t nt) 
 #endif
 static __attribute__((noinline)) void mix_part(track_t *t,uint32_t n)
 {
+    if(t->engine==ENGI_MIDI){t->peak=0;return;}
     uint32_t extra=0;
     if(fx_send_on && fx_bus_separate)for(uint32_t slot=0;slot<FX_SLOTS-1u;slot++){
         uint32_t amount=(uint32_t)t->p[P_FXSEND2+slot];fx_extra_gain[slot]=(amount+(amount==127u))*512u;extra|=amount;
@@ -274,43 +274,14 @@ static __attribute__((noinline)) void mix_part(track_t *t,uint32_t n)
     if(fx_profile_control>>30u && fx_profile_track((uint32_t)(t-trk))){for(uint32_t i=0;i<n;i++)part_buf[i]=((i&8u)?-8000:8000)+(int32_t)i*97;rendered=1;spread_on=0;}
 #endif
     AP_START(mix_start);
-    if(rendered || fx_active(t)){
-        if(!rendered){memset(part_buf,0,n*sizeof *part_buf);if(spread_on)memset(spread_buf,0,n*sizeof *spread_buf);}
-        AP_START(fx_start);int wet;
-#if MELODEE_DUAL_CORE && MELODEE_BATCH_AUDIO && !MELODEE_LEGACY_EXTRAS
-        uint32_t p=(uint32_t)(t-trk);
-        if(batch_ready && batch_reverb_track==p){
-            batch_reverb_track=NPART;wet=fx_reverb_private_take(t,part_buf,n);
-        }else{
-            uint32_t next=p+1u;int paired=0;fx_plan_t first;
-            if(batch_ready && fx_reverb_parallel_enabled && audio_worker_online && next<trk_n() &&
-               !batch_mod[next].on && !batch_spread_on[next] && fx_single_reverb(t) && fx_single_reverb(&trk[next])){
-                const engine_t *e=ENGINES[trk[next].engine];uint32_t nr=batch_rendered[next];
-                if(nr && e->post){e->post(&trk[next],batch_pcm[next],n,nr);batch_posted[next]=1;}
-                if(!nr)memset(batch_pcm[next],0,n*sizeof batch_pcm[next][0]);
-                if(fx_reverb_private_start(t,&trk[next],batch_pcm[next],n,&first)){batch_reverb_track=next;paired=1;}
-            }
-            if(paired){   /* (fx_pan in .dsp_text: past a direct jump from flash in builds without RAM audio) */
-                void (*volatile pan)(track_t *,int32_t *,uint32_t)=fx_pan;pan(t,part_buf,n);
-                wet=fx_slot_run(&first,n);fx_post_pan(t,n);
-            }
-            else wet=fx_process(t,part_buf,n);
-        }
-#else
-        wet=fx_process(t,part_buf,n);
-#endif
-        AP_END(AP_FX,fx_start);
-        if(wet){
-            void (*volatile run)(track_t *,uint32_t)=mix_fx_samples;run(t,n);
-        }else{
-            mix_solo(t,part_buf,n);
-            if(spread_on)mix_spread(t,part_buf,n);
-            else{
+    if(rendered){
+        mix_solo(t,part_buf,n);
+        if(spread_on)mix_spread(t,part_buf,n);
+        else{
             mix_cache_t *mc=&mix_cache[(uint32_t)(t-trk)];
             if(!mc->valid || mc->level!=t->p[P_LEVEL] || mc->pan!=t->p[P_PAN])mix_cache_update(t,mc);
             void (*volatile mix)(track_t *,int32_t *,uint32_t,const mix_cache_t *)=mix_mono_samples;
             mix(t,part_buf,n,mc);
-            }
         }
     }
     AP_END(AP_MIX,mix_start);
@@ -320,14 +291,19 @@ static __attribute__((noinline)) void mix_part(track_t *t,uint32_t n)
 static __attribute__((noinline,section(".dsp_text"))) void master_samples(int32_t *out,uint32_t n)
 {
     int32_t gain=fx_bus_mix,target=fx_bus_target;
-    for(uint32_t i=0;i<n;i++){
+    /* With no wet result the sample pass only rewrites the dry mix. Advance
+     * its monotone return ramp once; keep per-sample rounding when audible. */
+    if(!fx_bus_result)gain+=clamp(target-gain,-(int32_t)n*128,(int32_t)n*128);
+    else for(uint32_t i=0;i<n;i++){
         if(gain!=target)gain+=clamp(target-gain,-128,128);
         int32_t l=mix_l[i],r=mix_r[i];
-        if(fx_bus_result){uint32_t ret=(uint32_t)gain*2u;
+        {uint32_t ret=(uint32_t)gain*2u;
             l+=((fx_scale(fx_left[i],ret)>>2)*(int32_t)song.master_q12)>>10;
             r+=((fx_scale(fx_right[i],ret)>>2)*(int32_t)song.master_q12)>>10;}
-        master_out(&l,&r);out[2u*i]=l;out[2u*i+1u]=r;
+        mix_l[i]=l;mix_r[i]=r;
     }
+    punch_process(mix_l,mix_r,n);
+    for(uint32_t i=0;i<n;i++){int32_t l=mix_l[i],r=mix_r[i];master_out(&l,&r);out[2u*i]=l;out[2u*i+1u]=r;}
     fx_bus_mix=gain;
 }
 static __attribute__((noinline)) void mix_block(int32_t *out,uint32_t n)
@@ -337,13 +313,13 @@ static __attribute__((noinline)) void mix_block(int32_t *out,uint32_t n)
 #endif
 #if MELODEE_USB_AUDIO
     track_capture_on=(uint8_t)ua_capture_active();
-    if(track_capture_on)memset(track_capture,0,n*NTRK*sizeof *track_capture);
+    if(track_capture_on)memset(track_capture,0,n*NPART*sizeof *track_capture);
 #endif
     memset(mix_l,0,n*sizeof *mix_l);memset(mix_r,0,n*sizeof *mix_r);
     AP_START(events_start);events_block(n);AP_END(AP_EVENTS,events_start);
     fx_bus_select();fx_send_on=(uint8_t)fx_bus_active();if(fx_send_on){memset(fx_send_l,0,n*sizeof *fx_send_l);memset(fx_send_r,0,n*sizeof *fx_send_r);
         if(fx_bus_separate){memset(fx_send_extra_l,0,sizeof fx_send_extra_l);memset(fx_send_extra_r,0,sizeof fx_send_extra_r);}}
-    uint32_t nt=trk_n();                                /* (the tracks not in use: none of their CPU) */
+    uint32_t nt=trk_parts();                            /* (the tracks not in use, the MIDI-only ones: none of their CPU) */
 #if MELODEE_BATCH_AUDIO && !MELODEE_LEGACY_EXTRAS
     mix_prepare_batch(n,nt);
 #endif

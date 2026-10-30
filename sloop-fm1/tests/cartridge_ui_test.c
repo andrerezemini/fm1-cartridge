@@ -260,9 +260,11 @@ static void test_cartridge_lifecycle(void)
     uint32_t i, sent;
     set_cart_channel(0); frame();
     mo_r = mo_w;
+    trk[0].v[0].pend = VP_ON; trk[0].v[0].pend_note = 64; trk[0].v[0].pend_vel = 90;   /* a sample's note waiting */
     set_cart_channel(1); frame();
     check(cart_tracks == 1u && midi_seen(0xB0, 123) == 1,
           "a track the cartridge takes: an All Notes Off on its channel ends the keys' plain notes");
+    check(!trk[0].v[0].pend, "and a note its engine had waiting for a voice's fade is dropped (it would sound later)");
     mo_r = mo_w;
     trk_note_on(&trk[0], 68, 90);
     trk[0].pold = 1; panic_req |= 1u; frame(); trk[0].pold = 0;
@@ -273,6 +275,16 @@ static void test_cartridge_lifecycle(void)
     check(mo_lost == 1u, "a note-off lost on a full ring is remembered");
     mo_r = mo_w; frame();
     check(midi_seen(0xB0, 123) == 1 && !mo_lost, "then an All Notes Off on that channel ends it");
+    {   /* (2.8.3) a note message lost on the MIDI input ring: the notes MIDI held end, on the cartridge too */
+        uint8_t route = (uint8_t)song.g[G_ROUTE];
+        song.g[G_ROUTE] = 0;                            /* (MIDI in by channel) */
+        mo_r = mo_w;
+        midi_in_event(0x09u | (0x90u | trk_midi_ch(0)) << 8 | 76u << 16 | 100u << 24); frame();
+        check(midi_seen(0x90, 76) == 1 && !voices_on(&trk[0]), "a MIDI note in on the cartridge track goes to the cartridge");
+        mo_r = mo_w; midi_in_lost = 1; frame();
+        check(midi_seen(0x80, 76) == 1, "a note message lost on the MIDI input: the note MIDI held ends on the cartridge");
+        song.g[G_ROUTE] = route;
+    }
     trk_note_on(&trk[0], 72, 90);
     check(!cart_quiet(), "autosave waits while a cartridge track holds a note");
     trk_note_off(&trk[0], 72); frame();
@@ -377,7 +389,9 @@ static void test_cartridge_lifecycle(void)
     check(uar_track_q12 == 0u, "LEVEL 0 mutes the return, as the track shows");
     trk[0].p[P_LEVEL] = 127; cart_tracks_block();
     check(uar_track_q12 > 4096u && uar_track_q12 < 4u * 4096u, "LEVEL up: the return louder, as a track's");
-    trk[0].p[P_LEVEL] = TP[P_LEVEL].def; trk[0].p[P_MUTE] = 1; cart_tracks_block();
+    trk[0].p[P_LEVEL] = TP[P_LEVEL].def; ex_off[0] = 127u - 64u; cart_tracks_block();
+    check(uar_track_q12 > 900u && uar_track_q12 < 1150u, "MIDI EXPRESSION 64: the return about 12 dB down, as a track's");
+    ex_off[0] = 0; trk[0].p[P_MUTE] = 1; cart_tracks_block();
     check(uar_track_q12 == 0u, "MUTE mutes the return");
     trk[0].p[P_MUTE] = 0; trk[0].peak = 0; uar_peak = 5000; cart_tracks_block();
     check(uar_track_q12 == 4096u && trk[0].peak >= 5000 && !uar_peak, "the track's meter reads the return");

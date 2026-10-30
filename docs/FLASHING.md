@@ -1,7 +1,8 @@
 # Flashing the cartridge and the FM-1
 
 Flashing is never part of a build. Both procedures below take a full backup first and check the
-result afterwards. Connect one device to the computer at a time: the ESP32 and the FM-1 are not
+result afterwards. The cartridge manager ([WEB_MANAGER.md](WEB_MANAGER.md)) runs the same steps from
+Chrome or Edge, with the same checks. Connect one device to the computer at a time: the ESP32 and the FM-1 are not
 connected to each other while flashing.
 
 ## ESP32-S3: the three firmware slots

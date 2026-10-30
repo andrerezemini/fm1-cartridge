@@ -196,7 +196,7 @@ static void dsk_hit(track_t *t, uint32_t note, uint32_t vel)
     role = drum_gm(t->p, note, &st);
     lane = DV_TYPE_LANE[role];
     sound = drum_sound_of(t, note) & 15u;
-    pc = drum_patch[t - trk].c[sound];
+    pc = drum_patch_of(t - trk)->c[sound];
     tune = clamp((st + pc[0] + drum_event_pitch) * 16 + (t->p[P_E1] - 64) * 3, -576, 576);
     K->quiet = 0;
     if (t->p[P_E6] && sound <= D9_SD) {
@@ -371,6 +371,31 @@ static __attribute__((noinline)) void dsk_render(track_t *t, int32_t *out, uint3
     ic1 = K->ic1; ic2 = K->ic2; xlp = K->xlp; xhp = K->xhp;
     dpos = K->dpos;
     dend = (uint32_t)K->dlen << 16;
+#if MELODEE_DRUM_FAST
+    /* Channels share no oscillator or noise state. Accumulate each channel
+     * into its route in the original channel order before filtering. */
+    int32_t routed[CTL]={0},direct[CTL]={0};
+    for(k=0;k<DSK_NCH;k++){
+        if(!(live>>k&1u))continue;
+        dsk_ch_t *c=&K->ch[k];
+        uint32_t ph=c->ph,inc=c->inc,noise=c->noise,nb=c->nb,pt=c->pt;
+        uint32_t noisy=c->ctrl&DSK_NOISE,wb=(c->ctrl>>4)&7u;wb&=-wb;
+        int32_t *dest=route>>k&1u?routed:direct;
+        for(i=0;i<n;i++){
+            uint32_t q=ph+inc,w;
+            if(noisy){
+                if((((ph^0x08000000u)&0x0fffffffu)+inc)>>28){noise=sid_noise_advance(noise,ph,inc);nb=sid_noise_bits(noise);}
+                w=nb;
+            }else w=wb?sid_wave_out(wb,0,q,q,pt):0u;
+            ph=q;
+            int32_t x=((sid_dac(dac,w)-zero)*(a0[k]+(((a1[k]-a0[k])*(int32_t)i)>>CTL_LOG2)))>>15;
+            dest[i]+=x;
+        }
+        c->ph=ph;c->noise=noise;c->nb=nb;
+    }
+    for(i=0;i<n;i++){
+        int32_t f=routed[i],d=direct[i],s;
+#else
     for (i = 0; i < n; i++) {
         int32_t f = 0, d = 0, s;
         for (k = 0; k < DSK_NCH; k++) {
@@ -398,6 +423,7 @@ static __attribute__((noinline)) void dsk_render(track_t *t, int32_t *out, uint3
             else
                 d += x;
         }
+#endif
         {                                          /* the filter: the SID engine's TPT state variable, LP */
             int32_t v3 = f - ic2, bp, lp;
             bp = soft_knee((fc.a1 * ic1 + fc.a2 * v3) >> 13, knee);

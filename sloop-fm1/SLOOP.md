@@ -1,14 +1,37 @@
 <p align="center"><img src="assets/logo/sloop-logo.png" alt="SLOOP" width="480"></p>
 
-# SLOOP 2.7
+# SLOOP 2.8.4
 
 **A live groovebox firmware for the M-VAVE FM-1 — for any style.** Four tracks — three synths and a drum machine with 16 sounds on the white keys — twelve synthesis engines (six-operator FM with DX7 patches, and now physical models and noise), 153 sounds, 37 drum kits (808, 909, trap, phonk, house, techno, UK garage, jungle, amapiano, reggaeton, synthwave, chiptune, ambient, jazz…), your own samples, ghost notes and ratchets, parameter locks, micro timing and fills, note repeat, one-key chords, 27 punch-in effects, a vinyl / sidechain / DJ-filter master, and a teenage-engineering-style screen that always shows what your hands can do next. No factory patterns, nothing to load: everything you hear, you play.
 
 SLOOP is free and open source (GPL-3.0), based on [Felucca](https://github.com/hugelton/Felucca) by Leo Kuroshita / Hügelton Instruments.
 
-> **Status:** 2.7, running on the FM-1. Still a beta: install at your own risk, and please report what you find (GitHub issues).
+> **Status:** 2.8.4, running on the FM-1. Still a beta: install at your own risk, and please report what you find (GitHub issues).
+
+> **2.8.4:** a bug-fix release. no more distortion at the end of notes, 3.5 mm and USB; UNISON no longer stacks its voices in phase; PHYS strings in tune; NZ ARCADE, SAMPLE and GRAIN follow the top keys; a firm press on a layer button opens its pages; on REC READY a knob changes only its own value; the way back to the official firmware with V16.
+
+> **2.8.3:** hold a note under others. On a POLY track, a note you hold while you play others over it keeps sounding while you record and when you play it back, in a free take too (it used to restart and cut out), it goes on through steps that already have notes when you overdub, and in SEQ → NOTES its LEN now runs on under the notes after it (a long bass under a melody) instead of stopping at *NOTE AHEAD*. On a MONO or LEGATO sound (track 1's 808 BOOM), the screen says *MONO: SET VOICE POLY*. MIDI in: a burst too fast to keep no longer leaves a note stuck. A quick tap on a button no longer flashes its layer page: a layer shows after 0.35 s held (0.14 s before), or at once when you use a key or knob. Drums: on a busy beat the kick (and the other hits) no longer drop out: a drum sound hit again takes its own voice before another's, and the kick is taken last. Samples (SAMPLE, SLICE): a sample played again on a voice still sounding (the same chop again on POLY, every note on MONO, LEGATO or UNISON) now starts from silence with its ATK; it used to start at the level the voice had, with a click, and ATK did nothing. The second core: on some FM-1s it can misread a word under heavy USB traffic (a backup over USB); it now checks every job before running it and refuses a wrong one, and SLOOP goes on with one core until the next power-off instead of crashing (a fault on the second core used to leave the crash screen until a power cycle).
+
+> **2.8.1:** the per-step note sheet (hold **OCT+**) is now a strip along the bottom of the screen instead of a box over the sequencer, so the piano roll and the drum grid stay fully visible; and it reopens on the row you last used, for a quick MOVE.
 
 > **Looking for one control?** [GUIDE.md](GUIDE.md) is the complete guide: every button, key combination, layer, page and editor page, with a [one-page cheat sheet](GUIDE.md#26-cheat-sheet).
+
+### New in 2.8
+
+3,000 of you now follow SLOOP — thank you. 2.8 is a deeper way to write and shape your music, and most of it comes from your comments and reports.
+
+- **A NOTES editor: a piano roll for the synth tracks.** SEQ → **NOTES**: write and edit notes step by step. KNOB 1 picks the notes (a chord's notes one at a time), KNOB 2 the pitch, KNOB 3 the length, KNOB 4 the force; PRESETS zooms, EDIT deletes. Hold **OCT+** on a step for its sheet: SLIDE, NUDGE, FILL, MOVE, COPY, DELETE. Thanks to everyone who asked for it.
+- **The same per-step sheet on the DRUMS grid.** Hold **OCT+** on a drum step for RATCHET, NUDGE, FILL, MOVE, COPY, DELETE — the groove, shaped step by step, without leaving the grid.
+- **The playing section on screen.** The TRACKS screen now shows which section — **A to D** — is playing, in its own colour, so you always know where you are in the song.
+- **Filter resonance.** The per-track filter gains a **RESO** control, 0 (clean, as before) to 10 (AUDIO → **FILTER RESO**): from a gentle tilt to a singing, squelchy sweep.
+- **The FX filter on the drum track too.** The FX → **FILTER** page now works on drums: sweep and shape the whole kit, live, like any synth track.
+- **Drum TUNE on the noise sounds.** **TUNE** now shapes the brightness of the tone-less sounds (closed hats, shakers, claps) on the synthesised kits, not only the pitched ones.
+- **A smoother punch-in.** A settable fade-in and out for the 27 punch-in effects, from instant to about a third of a second: hold **FX**, then **SELECT**. The old extra MASTER 2 page is gone.
+- **MIDI Bank Select (CC 0).** Reach every preset past the 128 Program Change range — the rest of the factory sounds, then your own user presets by slot — from a controller or a DAW.
+
+**Fixed.** **USB RESCUE** (hold **OCT-** at power-on) now opens reliably — the key matrix is powered before the early scan. The browser installer finds the FM-1's update loader **by its handshake** instead of its port name, so a loader that Windows renames to a generic MIDI port is still found, and the old MIDI ports are closed properly. The external **MIDI clock** reads steadier (the tempo is the average of the last beats). The SONG sections take the current theme's colours. The in-browser **return-to-stock** option was removed because it is not reliable on every system — use M-VAVE's own updater **M-UPGRADE** to go back to the official firmware.
+
+Projects, autosaves and backups from 2.7 load as they are, and a project saved in 2.8 opens in 2.7 too (no format change). The USB-RESCUE fix is in the firmware, so it only helps once 2.8 is installed.
 
 ### New in 2.7
 
@@ -206,7 +229,7 @@ The four dials at the bottom of the screen show what KNOB 1–4 do now. White al
 
 ## The panel: tap, hold, layers
 
-Every function button has two lives. **Tap** it (press and let go, touching nothing else): its pages open, as on any FM-1 firmware. **Hold** it: a **layer** — the 16 white keys and KNOB 1–4 change job while it is held, and after 0.14 s the screen shows the 16 keys as tiles and the knobs as dials. Let go: back to playing.
+Every function button has two lives. **Tap** it (press and let go, touching nothing else): its pages open, as on any FM-1 firmware. **Hold** it: a **layer** — the 16 white keys and KNOB 1–4 change job while it is held, and after 0.35 s (or at once when you use a key or knob) the screen shows the 16 keys as tiles and the knobs as dials. Let go: back to playing.
 
 The tiles are four rows of four, keys 1–4, 5–8, 9–12, 13–16. To find them without looking at the screen, the first key of each row (1, 5, 9, 13) glows dimly while a layer is held, and on the drum track; the keys at full light are what is on.
 
@@ -618,6 +641,6 @@ The glow is a short pulse on every scan of the panel (about 900 times a second):
 
 - **USB rescue:** hold **OCT−** alone while switching on (*SLOOP USB RESCUE*), then install again.
 - **Interrupted install:** the FM-1 stays in update mode; press Install again and it finishes. A damaged package is refused, and the FM-1 keeps waiting for a good one.
-- **Back to the official firmware:** on the installer page, open **Return to the official firmware (V15)**: save a backup with the editor first, download FM-1 V15 from m-vave.com, select its FM-1.fwsc (only that exact file is accepted) and install it. M-VAVE's own updater, M-UPGRADE, works too (close every other app that uses MIDI first). To come back to SLOOP, install it again and restore your backup.
+- **Back to the official firmware:** save a backup with the editor first. Then use M-VAVE's own updater, **M-UPGRADE** (m-vave.com → Downloads → PC Software), with the official **FM-1** firmware (PC Firmware → FM-1, **V16**, `FM-1.fwsc`); close every other app that uses MIDI first. If M-UPGRADE does not find the FM-1 (SLOOP shows up on the computer under its own name, and some systems' M-UPGRADE then does not list it): open **Clipper**'s installer page (https://isod89.github.io/clipper-fm1/webapp/installer/) and use its **Return to the official firmware** (it works with SLOOP on the FM-1: no need to install Clipper) with that `FM-1.fwsc` (V16 or V15; the file is checked before anything is written). To come back to SLOOP, install it again and restore your backup.
 - **Credits:** SLOOP is based on Felucca by Leo Kuroshita (@kurogedelic), Hügelton Instruments — engines, sequencer, editor and installer. Played-note key lights: @renebohne (pull request #11). The web editor's local audio preview (the firmware's engines in the browser, WebAssembly): @ordenador, Mario Faúndez Vidal (pull request #120). The knob acceleration (KNOB ACCEL) and the LEVEL / PAN glide in 2.7: after JIANT FM by juanjiant-bit. MIDI CC 74 on each engine's cutoff in 2.7: after @renebohne (pull request #71). The second core and 38 KB of RAM in 2.7: andrerezemini (pull request #111), on the dual-core start of Charles Vestal (X0X) and keremimo (Melodee). TRS MIDI input buffer fix: Felucca [Salt] by ChanceTheMaker, found by keremimo. Knob reading, MIDI input, overload shedding, LED glow, key debounce, MIDI clock, the USB audio input and the return to the official firmware after Felucca 1.0 / 1.0.1. INSERT, LFO SYNC / TRIG / POL, ENV SYNC, the ANALOG filter types, note LEN, MIDI LEARN and the latched-arp fix (#191) after Felucca 1.4 / 1.4.1 / 1.5; the live drum mutes after Felucca 1.4.1; Program Change (@renebohne, Felucca PR #179), the 1/4D delay and the REV / ECHO THROW after Felucca 1.5.1; in 2.7 the arp modes REPEAT, DNUP, UP+8, CONV, DIVG, PINKY, THUMB, WALK and CHORD after Felucca 1.5.1. These Felucca features were first asked for by Wulgaren, etyrnal, benjaminguerrer, gospodindilly-ops, Armstrong1980, oMauNaProducer, lostfictions and planist79 (Felucca discussions #78, #104, #154, #170, #173, #175, #177, #178; issue #191). And thanks to everyone who commented, tested and reported on SLOOP: most of 2.6 comes from you. Font: Terminus and Terminus Bold (SIL OFL 1.1). Samples: Versilian Studios VSCO-2 CE and VCSL, Sonic Pi (all CC0). PHASE: CrispyZebra (GPL). FM6: msfa from Dexed by Google Inc. and Pascal Gauthier (Apache-2.0), ported to integer C for Felucca 1.0 by Leo Kuroshita. VOICE after klattsch (MIT). Interface ideas after teenage engineering's pocket operators and EP-133, Elektron's step entry and Akai's MPC (swing, note repeat, erase) — SLOOP is not affiliated with any of them.
 - **Licence:** GPL-3.0, no warranty. M-VAVE and FM-1 are trademarks of their owners; SLOOP is not affiliated with them. Drum kit names describe styles; they do not refer to any product.

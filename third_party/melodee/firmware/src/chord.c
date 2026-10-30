@@ -14,7 +14,8 @@
  * engine that maps the keys itself) ignores CHRD. Every source keeps the notes it started (kb_chord for a
  * key, mchord for a MIDI note) and its release ends exactly those, so CHRD / VOIC changed while it is held
  * leave nothing hanging. A note several sources hold sounds once and ends with the last of them. */
-enum { CH_OFF, CH_DIA3, CH_DIA7, CH_MAJ, CH_MIN, CH_DOM7, CH_MAJ7, CH_MIN7, CH_SUS4, CH_POW };
+/* Append modes: these values are stored in songs, presets and editor files. */
+enum { CH_OFF, CH_DIA3, CH_DIA7, CH_MAJ, CH_MIN, CH_DOM7, CH_MAJ7, CH_MIN7, CH_SUS4, CH_POW, CH_AUTO, CH_MELODY };
 enum { VC_CLOSE, VC_OPEN, VC_INV1, VC_INV2, VC_BASS };
 #define CHORD_MAX 4u
 #define MCHORD_N 24u                     /* MIDI notes held as chords at once (more: their root alone) */
@@ -42,6 +43,9 @@ static int chord_kit(const track_t *t)
     const engine_t *e = ENGINES[eng_idx(t->eng_req)];
     return e->oneshot || (e->keys && e->keys(t, 0) >= 0);
 }
+
+#include "chord_auto.c"
+#include "chord_melody.c"
 
 /* the tones of the chord (semitones above *root, ascending, iv[0] = 0) -> their number; DIA may move *root
  * down onto the scale */
@@ -103,10 +107,14 @@ static uint32_t chord_make(const track_t *t, uint32_t root, uint8_t *out, int32_
     uint16_t mask = 0;
     *rp = r;
     *maskp = 0;
-    if (!mode || mode > CH_POW || chord_kit(t)) {
+    int automatic = mode == CH_AUTO || mode == CH_MELODY;
+    if (automatic && micro_scale(t)) *maskp = 1;
+    if (!mode || mode > CH_MELODY || chord_kit(t) || (automatic && micro_scale(t))) {
         out[0] = (uint8_t)root;
         return 1;
     }
+    if (mode == CH_AUTO) return chord_auto_make(t, root, out, rp, maskp);
+    if (mode == CH_MELODY) return chord_melody_make(t, root, out, rp, maskp);
     n = chord_tones(t, mode, &r, iv);
     for (i = 0; i < n; i++)
         mask |= (uint16_t)(1u << (micro_active(t) ?
@@ -170,7 +178,9 @@ static uint32_t chord_build(track_t *t, uint32_t root, uint8_t *out)
     int32_t r;
     uint16_t mask;
     uint32_t m = chord_make(t, root, out, &r, &mask), i, k = trk_index(t);
-    if (m > 1u) {
+    if (t->p[P_CHRD] == CH_AUTO && !micro_scale(t) && !chord_kit(t) && trk_vmode(t) == V_POLY)
+        chord_auto_remember(t, r, mask, out, m);
+    if (m > 1u || t->p[P_CHRD] == CH_MELODY) {
         chord_last[k].root = (uint8_t)clamp(r, 0, 127);
         chord_last[k].mask = mask;
         chord_last[k].n = (uint8_t)m;
@@ -233,6 +243,7 @@ static int mchord_held(uint32_t id, uint32_t note)
 
 static void mchord_forget(uint32_t track)               /* panic: the track's MIDI chords are gone */
 {
+    chord_auto_forget(track);
     uint32_t i;
     for (i = 0; i < MCHORD_N; i++)
         if (mchord[i].id == track + 1u)
@@ -251,6 +262,13 @@ static uint32_t chord_strum_begin(track_t *t, uint8_t *notes, uint32_t n, chord_
     if (t->p[P_STROKE] == 2) up = chord_alternate[trk_index(t)]++ & 1u;
     if (up) for (uint32_t i = 0; i < n / 2u; i++) {
         uint8_t x = notes[i]; notes[i] = notes[n - 1u - i]; notes[n - 1u - i] = x;
+    }
+    if (!up && t->p[P_CHRD] == CH_MELODY && !micro_scale(t)) {
+        /* The melody sounds on the press; DOWN/UP/ALT order its accompaniment.
+         * Freeze that order here so later mode changes cannot delay the tune. */
+        uint8_t melody = notes[n - 1u];
+        for (uint32_t i = n - 1u; i; i--) notes[i] = notes[i - 1u];
+        notes[0] = melody;
     }
     s->total = (uint8_t)n; s->rate = (uint8_t)rate; s->vel = (uint8_t)vel;
     s->beat = seq_beat_samples();

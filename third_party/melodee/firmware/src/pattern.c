@@ -1,38 +1,50 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio) */
-/* Four editable/playing patterns live in track.step. Inactive banks use a
- * bounded, lossless pool of 16-byte chunks, addressed in 16-step blocks.
- * Empty blocks allocate nothing; identical steps share one snapshot; other
- * blocks store only non-default steps. The dense fallback is nine bytes per
- * step (including unused note bytes and n on rests/ties).
+/* The editable/playing patterns live in track.step. Inactive banks use a
+ * bounded pool of 16-byte chunks, addressed in 16-step blocks.
+ * Empty blocks allocate nothing; identical steps share one copy; other
+ * blocks store only non-default steps. The dense fallback is eight bytes per
+ * step: a bank record's packing (step_snapshot.h step_packed_put), exact but
+ * for n on rests/ties, which the device keeps 0.
  *
  * One staging pattern per track prepares the next bank. At a prepared switch
  * the ISR swaps bounded step/timing arrays and retires the incoming cold copy.
  * The staging buffer now owns the outgoing bank until foreground service
  * compresses it. If service has not run, a bounded synchronous fallback keeps
  * switching correct; it never waits for the UI, allocates a general heap, or
- * touches flash. At most NPAT-1 cold banks per track occupy the pool, so the
- * dense bound below guarantees space even if every step is different.
+ * touches flash. Shipping capacity has a dense cold-bank guarantee. Larger
+ * host fixtures use the shared budget of the original 32 x 64 dense steps,
+ * counting active and pending patterns as well as encoded banks. They must
+ * admit every edit before publication; the device limits remain unchanged
+ * until all editor/import paths participate in that admission contract.
  * Callers serialize mutations with the sequencer (as the old bank arrays did). */
 #include "step_snapshot.h"
 #define PAT_BLOCK_STEPS 16u
 #define PAT_BLOCKS ((NSTEP + PAT_BLOCK_STEPS - 1u) / PAT_BLOCK_STEPS)
 #define PAT_CHUNK_BYTES 16u
-#define PAT_BLOCK_CHUNKS ((PAT_BLOCK_STEPS * sizeof(step_snapshot_t) + PAT_CHUNK_BYTES - 1u) / PAT_CHUNK_BYTES)
-#define PAT_CHUNKS (NTRK * (NPAT - 1u) * PAT_BLOCKS * PAT_BLOCK_CHUNKS)
-#define PAT_RETAINED_CHUNKS (PAT_CHUNKS < 672u ? PAT_CHUNKS : 672u)
+#define PAT_BLOCK_CHUNKS ((PAT_BLOCK_STEPS * STEP_PACKED_BYTES + PAT_CHUNK_BYTES - 1u) / PAT_CHUNK_BYTES)
+#define PAT_SHARED_LIMIT (NPAT > 8u || NSTEP > 64u)
+#define PAT_DENSE_BUDGET (NTRK * 8u * 4u * PAT_BLOCK_CHUNKS)
+#define PAT_CHUNKS (PAT_SHARED_LIMIT ? PAT_DENSE_BUDGET : NTRK * (NPAT - 1u) * PAT_BLOCKS * PAT_BLOCK_CHUNKS)
+#define PAT_RETAINED_CHUNKS (PAT_CHUNKS < 960u ? PAT_CHUNKS : 960u)   /* (the retained SRAM .noinit leaves) */
 #define PAT_NONE 0x7FFFu
 #define PAT_REPEAT 0x8000u
 _Static_assert(NSTEP % PAT_BLOCK_STEPS == 0u && PAT_CHUNKS < PAT_NONE, "bounded pattern block pool");
 typedef struct { step_t step[NSTEP]; int16_t timing[4]; } pattern_t;
 typedef struct { uint16_t head, mask; } pattern_block_t;
 static uint8_t pattern_chunks_retained[PAT_RETAINED_CHUNKS][PAT_CHUNK_BYTES] __attribute__((section(".noinit")));
-static uint8_t pattern_chunks_ram[PAT_CHUNKS - PAT_RETAINED_CHUNKS][PAT_CHUNK_BYTES];
-static uint16_t pattern_link[PAT_CHUNKS], pattern_free, pattern_pool_used, pattern_pool_peak;
+/* Payload belongs with the large buffers, leaving ordinary data SRAM for
+ * active/staging steps and bank directories as the capacity grows. This
+ * moves bytes between regions; it does not reduce the total reservation. */
+static uint8_t pattern_chunks_ram[PAT_CHUNKS - PAT_RETAINED_CHUNKS][PAT_CHUNK_BYTES] __attribute__((section(".pool")));
+/* Links and staging with the large buffers too: the MIDI-only tracks' banks outgrew data SRAM */
+static uint16_t pattern_link[PAT_CHUNKS] __attribute__((section(".pool")));
+static uint16_t pattern_free, pattern_pool_used, pattern_pool_peak;
 static pattern_block_t pattern_blocks[NTRK][NPAT][PAT_BLOCKS];
 static int16_t pattern_timings[NTRK][NPAT][4];
-static struct { pattern_t data; uint8_t bank, pending; } pattern_stage[NTRK];
+static struct { pattern_t data; uint8_t bank, pending; } pattern_stage[NTRK] __attribute__((section(".pool")));
 static uint32_t pattern_fallbacks;
+static volatile uint8_t pattern_full;
 static uint8_t chain_patterns[CHAIN_ROWS][NTRK];
 static uint8_t motion_pattern[MOTION_MAX];
 static uint16_t pattern_epoch; /* invalidates destructive edits waiting for a loop end */
@@ -94,25 +106,87 @@ static void pattern_byte_write(pattern_stream_t *s, uint8_t v)
 }
 static step_t pattern_stream_step(pattern_stream_t *s)
 {
-    step_snapshot_t v; uint8_t *p = (uint8_t *)&v;
-    for (uint32_t i = 0; i < sizeof v; i++) p[i] = pattern_byte_read(s);
-    return step_snapshot_get(&v);
+    uint8_t p[STEP_PACKED_BYTES];
+    for (uint32_t i = 0; i < sizeof p; i++) p[i] = pattern_byte_read(s);
+    return step_packed_get(p);
+}
+/* One cost definition for admission and encoding, including the repeat
+ * optimization and every hidden step. Padding at each block is charged. */
+static uint32_t pattern_block_shape(const step_t *steps, uint32_t *same)
+{
+    step_t empty = {{0}, 0, ST_REST};
+    uint32_t mask = 0; *same = 1;
+    for (uint32_t i = 0; i < PAT_BLOCK_STEPS; i++) {
+        if (memcmp(&steps[i], &empty, sizeof empty)) mask |= 1u << i;
+        if (memcmp(&steps[i], &steps[0], sizeof empty)) *same = 0;
+    }
+    return mask;
+}
+static uint32_t pattern_steps_cost(const step_t *steps, uint32_t n)
+{
+    uint32_t cost = 0;
+    for (uint32_t b = 0; b < n; b += PAT_BLOCK_STEPS) {
+        uint32_t same, mask = pattern_block_shape(steps + b, &same);
+        if (mask) cost += same ? 1u : ((uint32_t)__builtin_popcount(mask) * STEP_PACKED_BYTES + PAT_CHUNK_BYTES - 1u) / PAT_CHUNK_BYTES;
+    }
+    return cost;
+}
+static uint32_t pattern_bank_cost(uint32_t k, uint32_t bank)
+{
+    if (bank == trk[k].pattern) return pattern_steps_cost(trk[k].step, NSTEP);
+    if (pattern_stage[k].pending && pattern_stage[k].bank == bank) return pattern_steps_cost(pattern_stage[k].data.step, NSTEP);
+    uint32_t cost = 0;
+    for (uint32_t b = 0; b < PAT_BLOCKS; b++) {
+        const pattern_block_t *p = &pattern_blocks[k][bank][b];
+        if (p->mask) cost += p->head & PAT_REPEAT ? 1u : ((uint32_t)__builtin_popcount(p->mask) * STEP_PACKED_BYTES + PAT_CHUNK_BYTES - 1u) / PAT_CHUNK_BYTES;
+    }
+    return cost;
+}
+static uint32_t pattern_total_cost(void)
+{
+    uint32_t cost = pattern_pool_used;
+    for (uint32_t k = 0; k < NTRK; k++) {
+        cost += pattern_steps_cost(trk[k].step, NSTEP);
+        if (pattern_stage[k].pending) cost += pattern_steps_cost(pattern_stage[k].data.step, NSTEP);
+    }
+    return cost;
+}
+/* Call under the same guard as the eventual publication. Querying room never
+ * flushes staging or invalidates a prepared pattern. */
+static int pattern_can_write(uint32_t k, uint32_t bank, const pattern_t *p)
+{
+    if (k >= NTRK || bank >= NPAT) return 0;
+#if PAT_SHARED_LIMIT
+    return pattern_total_cost() - pattern_bank_cost(k, bank) + pattern_steps_cost(p->step, NSTEP) <= PAT_DENSE_BUDGET;
+#else
+    (void)p; return 1;
+#endif
+}
+static int pattern_set_step(track_t *t, uint32_t index, const step_t *step)
+{
+    if (index >= NSTEP) return 0;
+    uint32_t f = pattern_guard();
+#if PAT_SHARED_LIMIT
+    uint32_t base = index / PAT_BLOCK_STEPS * PAT_BLOCK_STEPS;
+    step_t block[PAT_BLOCK_STEPS]; memcpy(block, t->step + base, sizeof block);
+    block[index - base] = *step;
+    if (pattern_total_cost() - pattern_steps_cost(t->step + base, PAT_BLOCK_STEPS) +
+        pattern_steps_cost(block, PAT_BLOCK_STEPS) > PAT_DENSE_BUDGET) {
+        pattern_full = 1; pattern_unguard(f); return 0;
+    }
+#endif
+    t->step[index] = *step; pattern_unguard(f); return 1;
 }
 static void pattern_encode_block(pattern_block_t *b, const step_t *steps)
 {
-    step_t empty = {{0}, 0, ST_REST};
-    uint32_t mask = 0, same = 1;
-    for (uint32_t i = 0; i < PAT_BLOCK_STEPS; i++) {
-        if (memcmp(&steps[i], &empty, sizeof empty)) mask |= 1u << i;
-        if (memcmp(&steps[i], &steps[0], sizeof empty)) same = 0;
-    }
+    uint32_t same, mask = pattern_block_shape(steps, &same);
     pattern_free_block(b);
     b->mask = (uint16_t)mask;
     if (!mask) return;
     pattern_stream_t s = {PAT_NONE, PAT_CHUNK_BYTES};
     for (uint32_t i = 0; i < (same ? 1u : PAT_BLOCK_STEPS); i++) if (same || (mask & (1u << i))) {
-        step_snapshot_t v; step_snapshot_put(&v, &steps[i]); const uint8_t *p = (const uint8_t *)&v;
-        for (uint32_t j = 0; j < sizeof v; j++) {
+        uint8_t p[STEP_PACKED_BYTES]; step_packed_put(p, &steps[i]);
+        for (uint32_t j = 0; j < sizeof p; j++) {
             pattern_byte_write(&s, p[j]);
             if (b->head == PAT_NONE) b->head = s.head;
         }
@@ -129,10 +203,11 @@ static void pattern_decode_block(const pattern_block_t *b, step_t *steps)
         if (!(b->head & PAT_REPEAT) && (b->mask & (1u << i))) steps[i] = pattern_stream_step(&s);
     }
 }
-/* Only inactive banks are encoded. An outgoing bank may temporarily belong
- * to staging, which leaves at least one cold bank's worth of chunks free. */
+/* Release the entire old bank first. At full capacity its occupied chunks
+ * may be in later blocks than the replacement's, even when total size fits. */
 static void pattern_encode(uint32_t k, uint32_t bank, const pattern_t *p)
 {
+    pattern_free_bank(k, bank);
     for (uint32_t b = 0; b < PAT_BLOCKS; b++) pattern_encode_block(&pattern_blocks[k][bank][b], p->step + b * PAT_BLOCK_STEPS);
     memcpy(pattern_timings[k][bank], p->timing, sizeof p->timing);
 }
@@ -176,19 +251,22 @@ static step_t pattern_step(uint32_t k, uint32_t bank, uint32_t i)
     pattern_stream_t s = {(uint16_t)(b->head & ~PAT_REPEAT), 0};
     if (!(b->head & PAT_REPEAT)) {
         uint32_t preceding = b->mask & ((1u << bit) - 1u), bytes = 0;
-        while (preceding) { preceding &= preceding - 1u; bytes += sizeof(step_snapshot_t); }
+        while (preceding) { preceding &= preceding - 1u; bytes += STEP_PACKED_BYTES; }
         while (bytes >= PAT_CHUNK_BYTES) { s.head = pattern_link[s.head]; bytes -= PAT_CHUNK_BYTES; }
         s.pos = (uint8_t)bytes;
     }
     step_t v = pattern_stream_step(&s); pattern_unguard(f); return v;
 }
-static void pattern_write(uint32_t k, uint32_t bank, const pattern_t *p)
+static int pattern_write(uint32_t k, uint32_t bank, const pattern_t *p)
 {
+    uint32_t f = pattern_guard();
+    if (!pattern_can_write(k, bank, p)) { pattern_full = 1; pattern_unguard(f); return 0; }
     pattern_flush(k);
     if (bank == trk[k].pattern) {
         memcpy(trk[k].step, p->step, sizeof p->step); memcpy(&trk[k].p[P_SLEN], p->timing, sizeof p->timing);
     } else pattern_encode(k, bank, p);
     if (pattern_stage[k].bank == bank) pattern_stage[k].bank = 0xff;
+    pattern_unguard(f); return 1;
 }
 static void pattern_commit(track_t *t)
 {
@@ -233,7 +311,7 @@ static void pattern_apply(track_t *t, uint32_t bank)
 static void pattern_init(void)
 {
     recording_reset(); pattern_epoch++;
-    pattern_pool_used = pattern_pool_peak = 0; pattern_fallbacks = 0; pattern_free = 0;
+    pattern_pool_used = pattern_pool_peak = 0; pattern_fallbacks = 0; pattern_free = 0; pattern_full = 0;
     for (uint32_t i = 0; i < PAT_CHUNKS; i++) pattern_link[i] = (uint16_t)(i + 1u < PAT_CHUNKS ? i + 1u : PAT_NONE);
     memset(chain_patterns, 0, sizeof chain_patterns); memset(motion_pattern, 0, sizeof motion_pattern);
     memset(pattern_stage, 0, sizeof pattern_stage);

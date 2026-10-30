@@ -43,8 +43,8 @@ the firmware and of flashing it.
   confirms itself only after its cartridge server has answered the FM-1; one that does so and then
   misbehaves stays the default across resets: switch away with FIRMWARE, or flash another image
   through the USB bootloader.
-- **Sloop's headroom.** The cartridge profile leaves 468 B free in the FM-1's application image
-  (the diagnostic build 320 B), so any larger Sloop feature first needs flash to be freed.
+- **Sloop's headroom.** The cartridge profile leaves 7,520 B free in the FM-1's application image
+  (the diagnostic build 6,736 B).
 
 ## Profiles
 
@@ -54,11 +54,11 @@ Each profile has its own `sdkconfig`, built from `sdkconfig.defaults` plus the p
 | --- | --- | --- | --- |
 | `midi` (default), `midi-4m2m` | Enumeration, bulk IN, MIDI parser and console | Does not transmit audio | 283,536 B (`midi-4m2m`) |
 | `tone`, `tone-4m2m` | UAC1 TX of a stereo 440 Hz sine at −20 dBFS, independent of MIDI notes | Modified Sloop with the USB return | 312,320 B (`tone-4m2m`) |
-| `clipper`, `clipper-4m2m` | 23 ported Clipper engines, queued MIDI, 64-frame render on core 1, UAC1 TX, cartridge server, the sound kept in NVS | Same, plus the render fitting its budget on the ESP32 | 771,904 B, 41% of the slot free (`clipper-4m2m`) |
-| `felucca`, `felucca-4m2m` | 13 engines of Felucca 1.6.1, one part, same path | Same; **not yet heard on hardware** | 603,424 B, 54% free (`felucca-4m2m`) |
-| `melodee`, `melodee-4m2m` | Prophet, FM6, CZ-1, SID and DRUM of Melodee 1.4.5, one part, one core | Same; **not yet heard on hardware**; the heaviest in CPU and RAM | 571,168 B, 56% free (`melodee-4m2m`) |
+| `clipper`, `clipper-4m2m` | 23 ported Clipper engines, queued MIDI, 64-frame render on core 1, UAC1 TX, cartridge server, the sound kept in NVS | Same, plus the render fitting its budget on the ESP32 | 761,136 B, 42% of the slot free (`clipper-4m2m`) |
+| `felucca`, `felucca-4m2m` | 13 engines of Felucca 1.7.0, one part, same path | Same; **not yet heard on hardware** | 604,688 B, 54% free (`felucca-4m2m`) |
+| `melodee`, `melodee-4m2m` | Prophet, FM6, CZ-1, SID and DRUM of Melodee 1.5.1, one part, one core | Same; **not yet heard on hardware**; the heaviest in CPU and RAM | 596,528 B, 54% free (`melodee-4m2m`) |
 
-Internal RAM in use (`idf.py size`, DIRAM): Clipper 152 KB, Felucca 183 KB, Melodee 235 KB of 341 KB. The rest of the large state (delay and reverb lines, sequencer pools) sits in PSRAM through the `main/*.lf` fragments ([real-time budget](#real-time-budget)). The 8 MB synthesizer profiles (`clipper`, `felucca`, `melodee`) build with the same partition table.
+Internal RAM in use (`idf.py size`, DIRAM): Clipper 150 KB, Felucca 183 KB, Melodee 228 KB of 341 KB. The rest of the large state (delay and reverb lines, sequencer pools) sits in PSRAM through the `main/*.lf` fragments ([real-time budget](#real-time-budget)). The 8 MB synthesizer profiles (`clipper`, `felucca`, `melodee`) build with the same partition table.
 
 The `midi` profile enumerates the peripheral, looks for a MIDIStreaming interface (class 1, subclass 3) and receives USB-MIDI 1.0 packets over the bulk IN. Notes and transport appear on the console; the MIDI clock is counted and printed once per second so as not to saturate the UART. The audio profiles count the notes too and print one line a second, so the console never holds up a task. The console is the UART driver with a 4 KB transmit ring, without colour codes: a restart (a slot switch) waits for the ring to drain, while a panic or a watchdog prints its report straight to the UART and the last lines still in the ring before it are lost. On the Super Mini, build `midi-4m2m`: the plain `midi` profile expects 8 MB of flash and octal PSRAM and does not boot there.
 

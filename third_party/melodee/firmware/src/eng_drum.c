@@ -109,13 +109,13 @@ static const char *drum_character(uint32_t sound)
 {return sound==D9_SD?"SNAPPY":sound<=D9_HT?"ATTACK":"TONE";}
 static void drum808_values(const track_t *t,uint32_t sound,int16_t *p)
 {
-    memcpy(p,t->p,sizeof t->p);const int8_t *c=drum_patch[t-trk].c[sound];
+    memcpy(p,t->p,sizeof t->p);const int8_t *c=drum_patch_of(t-trk)->c[sound];
     p[P_E3]=(int16_t)clamp(p[P_E3]+c[1],0,127);
     if(sound==D9_SD)p[P_E4]=(int16_t)clamp(p[P_E4]+c[2],0,127);
 }
 static void drum909_values(track_t *t,drum909_part_t *k,uint32_t ins,int32_t pitch,uint32_t vel)
 {
-    drum909_t *d=&k->d;const int8_t *c=drum_patch[t-trk].c[ins];
+    drum909_t *d=&k->d;const int8_t *c=drum_patch_of(t-trk)->c[ins];
     for(int j=0;j<d9_nspec[ins];j++){
         const d9_pspec_t *s=&d9_specs[ins][j];int32_t value=s->ui.def;
         if(s->field==D9_F_ATTACK || s->field==D9_F_SNAPPY || (ins>=D9_RS && s->field==D9_F_TUNE))value+=c[2]+(s->field==D9_F_SNAPPY?0:t->p[P_E2]-64);
@@ -343,8 +343,8 @@ static void drum_note_on(track_t *t, voice_t *v)
     uint32_t ins = dr8_ins(v->note, role);
     L->sound=(uint8_t)drum_sound_of(t,v->note);
     int16_t local[P_COUNT];drum808_values(t,L->sound,local);
-    L->r.decay=drum_patch[t-trk].c[L->sound][1];
-    L->r.pitch=(drum_patch[t-trk].c[L->sound][0]+drum_event_pitch)*16;
+    L->r.decay=drum_patch_of(t-trk)->c[L->sound][1];
+    L->r.pitch=(drum_patch_of(t-trk)->c[L->sound][0]+drum_event_pitch)*16;
     dr8_hit(&L->r, ins, v->vel, local);
     v->env_out = mulq15(127 * 258, dr8_level(v->vel, t->p[P_E5]));
     if (lane == DV_HATC && ins == DR_CH)
@@ -388,7 +388,7 @@ static __attribute__((noinline)) int drum_source(track_t *t,voice_t *v,drum_lane
         drum909_part_t *k=drum909_of(t); if(!k || !k->nz)return 0;
         float f[CTL]={0}; drum909_render_voice(&k->d,v->s[1],k->nz,f,(int)n);
         for(i=0;i<n;i++)y[i]=(int32_t)(fm_clampf(f[i],-2.0f,2.0f)*12000.0f);
-    } else {int16_t local[P_COUNT];for(uint32_t k=0;k<8u;k++)local[P_E0+k]=p[P_E0+k];const int8_t *c=drum_patch[t-trk].c[L->sound];
+    } else {int16_t local[P_COUNT];for(uint32_t k=0;k<8u;k++)local[P_E0+k]=p[P_E0+k];const int8_t *c=drum_patch_of(t-trk)->c[L->sound];
         local[P_E3]=(int16_t)clamp(local[P_E3]+c[1],0,127);
         if(L->sound==D9_SD)local[P_E4]=(int16_t)clamp(local[P_E4]+c[2],0,127);dr8_run_into(&L->r,local,y,n,scratch);}
     return 1;
@@ -428,7 +428,7 @@ static void drum_render_into(track_t *t,voice_t *v,int32_t *out,uint32_t n,const
         mk = (int32_t)((19661u << 15) / (uint32_t)softclip((19661 * g) >> 12));
     }
     uint32_t sound=drum_is909(t)?(uint32_t)v->s[1]:L->sound;
-    const int8_t *c=drum_patch[t-trk].c[sound];
+    const int8_t *c=drum_patch_of(t-trk)->c[sound];
     if(!drum_is909(t) && sound!=D9_SD && c[2])drum_color(L,c[2],y,n);
     int32_t lv = clamp(p[P_LN0 + ((uint32_t)v->s[0] & (DV_NLANE - 1u))], 0, 127)*(127-c[3])/127;
     /* Fold lane gain into the block's amplitude ramp: no extra per-sample multiply. */

@@ -39,6 +39,16 @@ static int32_t lfo_wave(track_t *t, uint32_t ph)
     return lfo_wave_n(t->p[P_LWAVE], ph, (int32_t)(t->lfo_rnd >> 16) - 32768);
 }
 
+static uint8_t midi_breath;                             /* (1.0) GLO > MIDI 2 > EWI (seq.c): 0 OFF, 1 VOL, 2 V+AT */
+/* (1.1, the EWI player again: "a soft note adds a second one, at full level") an EWI is a monophonic instrument and
+ * its breath is the level: with EWI on, the instrument (and its LAYER) plays one note at a time, legato, whatever
+ * the sound's VOICE (a note fingered over the last one moves it, no second voice); the notes' velocity is fixed
+ * (seq.c), the breath alone shapes the level */
+static inline uint32_t voice_mode(const track_t *t)
+{
+    return CLIPPER_SYNTH && midi_breath && (uint32_t)(t - trk) < NPART && ctl_part(t) == 0u ? (uint32_t)V_LEGATO
+                                                                                   : (uint32_t)t->p[P_VOICE];
+}
 static uint8_t midi_bend;                               /* (1.0) GLO > MIDI > BEND, or RPN 0 (seq.c): the pitch bend's
                                                          * range in semitones, 0 AUTO (the HYBRID patch's, else 2) */
 #if CLIPPER_SYNTH
@@ -112,7 +122,7 @@ static uint32_t voice_victim(const track_t *self, int soft, track_t **pp)
     uint32_t p, i, best = NVOICE, cat = 4;
     for (p = 0; p < NPART; p++) {
         track_t *t = &trk[p];
-        uint32_t mode = (uint32_t)t->p[P_VOICE], nu = mode == V_UNISON ? trk_nvoice(t) : 1u;
+        uint32_t mode = voice_mode(t), nu = mode == V_UNISON ? trk_nvoice(t) : 1u;
         uint32_t low = voice_poly((int)mode) ? lowest_held(t) : NVOICE;
         if (soft && t == self)
             continue;
@@ -174,7 +184,7 @@ static void shed_voice(void)
     }
     for (p = 0; p < NPART; p++) {
         const track_t *t = &trk[p];
-        uint32_t mode = (uint32_t)t->p[P_VOICE], low = voice_poly((int)mode) ? lowest_held(t) : 0u;
+        uint32_t mode = voice_mode(t), low = voice_poly((int)mode) ? lowest_held(t) : 0u;
         for (i = 0; i < NVOICE; i++) {
             voice_t *v = &trk[p].v[i];
             if (v->active && v->gate && v->stage != 4u &&
@@ -214,8 +224,12 @@ static voice_t *voice_alloc(track_t *t, uint32_t note)
     uint32_t i, np = trk_nvoice(t), best = np, low = np, nfree = 0;
     int32_t bd = 0x7FFFFFFF;
     for (i = 0; i < np; i++) {
-        if (t->v[i].active && t->v[i].note == note)
+        if (t->v[i].active && t->v[i].note == note) {
+            if (t->v[i].stage == 4u && voices_busy() >= NVOICE)
+                voice_room(t, 0);                       /* (SLOOP 2.8.3) a voice fading out (given up) sounds again: within the
+                                                         * budget of NVOICE, as a new one (after Melodee's voice_reuse) */
             return &t->v[i];
+        }
         nfree += !t->v[i].active;
     }
     if (nfree && voices_busy() >= NVOICE) {
@@ -290,12 +304,37 @@ static void glide_set(track_t *t, voice_t *v, int glide)
     }
 }
 
+/* (SLOOP 2.8.3) a sample (SAMPLE, SLICE) played again on a voice still sounding: it starts over at its first frame, so
+ * its attack must start from silence too. The envelope went on from the level it had: the sample jumped from where it
+ * was to its start at that level (a click), and ATK did nothing. That was every note in MONO / LEGATO / UNISON (one
+ * voice) and the same note played again in POLY (its voice reused); different notes in POLY took fresh voices and
+ * faded in (a SLOOP user's chopped breaks, ATK set to soften the chops' starts). Now the voice fades out over
+ * KILL_BLOCKS (~1.5 ms: env_tick stage 4), then the note starts on it from silence with its ATK (track_render:
+ * VP_ON). A note-off within the fade is kept for it (VP_OFF: released as it starts, or held by the pedal) */
+#define VP_ON 1u
+#define VP_OFF 2u
+#define VP_GLIDE 4u
+#define VP_UNI 8u   /* (after Clipper 1.2) an extra UNISON voice: its start spread (unison_spread) */
 static void voice_start(track_t *t, voice_t *v, uint32_t note, uint32_t vel, int glide)
 {
     const engine_t *e = ENGINES[t->engine];
     int sounding = v->active && v->stage != 0;
     uint32_t ph0 = v->ph[0], ph1 = v->ph[1], ph2 = v->ph[2];
     int32_t s0 = v->s[0], s1 = v->s[1], s3 = v->s[3], s4 = v->s[4], s5 = v->s[5], s6 = v->s[6], s7 = v->s[7];
+    if (sounding && eng_sampled(e)) {                   /* (SLOOP 2.8.3) fade it out first, then this note from silence */
+        v->note = (uint8_t)note;                        /* (the same note again finds it: voice_alloc) */
+        v->pend_note = (uint8_t)note;
+        v->pend_vel = (uint8_t)vel;
+        v->pend = (uint8_t)(VP_ON | (glide ? VP_GLIDE : 0u));
+        v->gate = 0;
+        v->sus = 0;
+        if (v->stage != 4u)
+            v->kill = KILL_BLOCKS;
+        v->stage = 4;
+        v->age = ++vage;
+        return;
+    }
+    v->pend = 0;
     v->note = (uint8_t)note;
     v->vel = (uint8_t)vel;
     v->gate = 1;
@@ -361,11 +400,62 @@ static void voice_start(track_t *t, voice_t *v, uint32_t note, uint32_t vel, int
     }
 }
 
+/* a UNISON voice's start phases moved by r (Q32: a turn of its note), as if it had started that much of a period
+ * sooner: in phase the voices stack, spread they sum as noise. Each engine moves its own oscillators (after Clipper
+ * 1.2: FMX and MACRO took nothing here, every voice in phase: FMX +12 dB over POLY, peaks of 4 full scales; MACRO's
+ * chords +7 dB peaks) */
+static void unison_spread(track_t *t, voice_t *v, uint32_t r)
+{
+    const engine_t *e = ENGINES[t->engine];
+    /* (after Clipper 1.2) each engine moves all its oscillators (and reseeds its noise): ph[0] alone left the others in
+     * phase (ANALOG's osc 2, TRIO's 2 and 3, DIGITAL's and FM6's operators, the subs, SAMPLE's start...) */
+    if (e == &ENG_ANALOG)
+        analog_spread(t, v, r);
+    else if (e == &ENG_DIGITAL)
+        digital_spread(t, v, r);
+    else if (e == &ENG_PHASE)
+        phase_spread(t, v, r);
+    else if (e == &ENG_LOFI)
+        lofi_spread(t, v, r);
+    else if (e == &ENG_TRIO)
+        trio_spread(t, v, r);
+    else if (e == &ENG_NOISE)
+        noise_spread(t, v, r);
+    else if (e == &ENG_FM6)
+        fm6_spread(t, v, r);
+    else if (e == &ENG_SAMPLE)
+        sample_spread(t, v, r);
+    else if (e == &ENG_HYBRID)
+        hybrid_spread(t, v, r);
+#if CLIPPER_SYNTH
+    else if (e == &ENG_FMX)
+        fmx_spread(t, v, r);
+    else if (e == &ENG_MACRO)
+        macro_spread(t, v, r);
+    else if (e == &ENG_STRINGS)
+        strings_spread(t, v, r);
+    else if (e == &ENG_WAVE)
+        wave_spread(t, v, r);
+    else if (e == &ENG_VPS)
+        vps_spread(t, v, r);
+    else if (e == &ENG_JUNO)
+        juno_spread(t, v, r);
+    else if (e == &ENG_WSEQ)
+        wseq_spread(t, v, r);
+#endif
+#if FELUCCA_SLICE
+    else if (e == &ENG_SLICE)
+        ;                                            /* (slices: as played) */
+#endif
+    else
+        v->ph[0] += r;
+}
+
 /* MONO / LEGATO / UNISON: one note on one voice (eight for UNISON, or the
  * engine's voice cap, spread by DETUNE over the same width) */
 static void mono_play(track_t *t, uint32_t note, uint32_t vel, int retrig, int glide)
 {
-    uint32_t mode = (uint32_t)t->p[P_VOICE], nv = mode == V_UNISON ? trk_nvoice(t) : 1u, i;
+    uint32_t mode = voice_mode(t), nv = mode == V_UNISON ? trk_nvoice(t) : 1u, i;
     for (i = 0; i < nv; i++) {
         voice_t *v = &t->v[i];
         int32_t k = 2 * (int32_t)i - (int32_t)(nv - 1u);   /* -7 .. 7 */
@@ -378,11 +468,12 @@ static void mono_play(track_t *t, uint32_t note, uint32_t vel, int retrig, int g
                 continue;                                   /* no room for this extra UNISON voice */
             /* level: about the same sum for 8 or 4 voices at random phases */
             voice_start(t, v, note, nv >= NVOICE ? vel * 36u / 100u : nv > 1u ? vel / 2u : vel, glide);
-            if (nv > 1u && i && !eng_sampled(ENGINES[t->engine]) && !was_sounding) {   /* random start phases: */
+            if (nv > 1u && i && !was_sounding) {   /* random start phases (SAMPLE: its start; not SLICE): */
                 static uint32_t seed = 0x1234567u;          /* in phase they stack, evenly spread they cancel */
                 seed = seed * 1664525u + 1013904223u;
-                v->ph[0] += seed;
-            }
+                unison_spread(t, v, seed);
+            } else if (nv > 1u && i && (v->pend & VP_ON))
+                v->pend |= VP_UNI;                          /* (a sample's, after its fade: spread as it starts) */
         } else {                                            /* legato: new pitch, same envelope */
             v->note = (uint8_t)note;
 #if CLIPPER_SYNTH
@@ -479,10 +570,11 @@ static void puni_on(track_t *t, uint32_t note, uint32_t vel)
         int32_t s = n > 1u ? (2 * (int32_t)j - (int32_t)(n - 1u)) * 7 : 0;   /* -7 .. 7 (x (n - 1)) */
         v->fine = n > 1u ? s * t->p[P_DETUNE] * 56 / (889 * (int32_t)(n - 1u)) : 0;
         voice_start(t, v, note, n >= 4u ? vel / 2u : n > 1u ? vel * 70u / 100u : vel, t->p[P_GLIDE] != 0);
-        if (j && !was && !eng_sampled(ENGINES[t->engine])) {   /* random start phases (in phase they stack) */
+        if (j && !was) {                                /* random start phases (in phase they stack) */
             seed = seed * 1664525u + 1013904223u;
-            v->ph[0] += seed;
-        }
+            unison_spread(t, v, seed);
+        } else if (j && (v->pend & VP_ON))
+            v->pend |= VP_UNI;                          /* (a sample's, after its fade: spread as it starts) */
     }
 }
 #endif
@@ -496,7 +588,7 @@ static volatile uint8_t vis_hit, vis_kick_hit, vis_note[NTRK];
 
 static void trk_note_on1(track_t *t, uint32_t note, uint32_t vel)
 {
-    uint32_t any = 0, i, mode = (uint32_t)t->p[P_VOICE];
+    uint32_t any = 0, i, mode = voice_mode(t);
     if (trk_silent(t))
         return;                                         /* MUTE, or another track soloed */
     vis_hit |= (uint8_t)(1u << ((uint32_t)(t - trk) & 3u));
@@ -504,7 +596,9 @@ static void trk_note_on1(track_t *t, uint32_t note, uint32_t vel)
     if (is_drum(t)) {                                   /* the drum track: GM drums (drums.c) */
         if (note == 35u || note == 36u)
             vis_kick_hit = 1;
+#if !CLIPPER_SYNTH || BOARD_SMK37                                      /* (Clipper 1.2: no drum machine, its sounds out of the image) */
         drum_on(note, vel);
+#endif
         return;
     }
     if ((uint32_t)(t - trk) < NPART && note < 128u)
@@ -570,7 +664,7 @@ static void strum_cancel(const track_t *t, uint32_t note, int all)
 }
 static void trk_note_off1(track_t *t, uint32_t note)
 {
-    uint32_t i, k = 0, mode = (uint32_t)t->p[P_VOICE];
+    uint32_t i, k = 0, mode = voice_mode(t);
     if (is_drum(t))
         return;                                         /* one-shots */
     strum_cancel(t, note, 0);
@@ -608,6 +702,9 @@ static void trk_note_off1(track_t *t, uint32_t note)
             t->v[i].gate = 0;
             t->v[i].stage = 3;
         }
+    for (i = 0; i < NVOICE; i++)                        /* (SLOOP 2.8.3) waiting for its fade: it starts, then releases */
+        if ((t->v[i].pend & VP_ON) && t->v[i].pend_note == note && t->mono_note != note)
+            t->v[i].pend |= VP_OFF;
 }
 
 /* Clipper: the sustain pedal comes up: the notes it held are released (a key still down keeps its note:
@@ -633,6 +730,7 @@ static void trk_all_off1(track_t *t)
         t->v[i].gate = 0;
         t->v[i].sus = 0;
         t->v[i].stage = t->v[i].active ? 3 : 0;
+        t->v[i].pend = 0;                               /* (SLOOP 2.8.3: a note waiting for its voice's fade: gone too) */
     }
     t->nmono = 0;
     t->mono_note = 0;
@@ -1171,6 +1269,16 @@ static void vs_finish(track_t *t, const engine_t *e, int32_t *out, uint32_t n)
 }
 #endif
 
+#if CLIPPER_SYNTH
+/* (after Clipper 1.2) the level of a voice of UNISON (UNI2, UNI4) against POLY's, Q15, as mono_play and puni_on set it
+ * through the velocity (about the same sum at random phases): for FMX, whose envelopes are the voice's level (no
+ * velocity there: its unison came out +6 dB over POLY with the phases spread, +12 before) */
+static int32_t uni_level(const track_t *t)
+{
+    uint32_t vm = voice_mode(t);
+    return vm == V_UNISON ? (trk_nvoice(t) >= NVOICE ? 11796 : 16384) : vm == V_PUNI4 ? 16384 : vm == V_PUNI2 ? 22938 : 32767;
+}
+#endif
 static uint32_t track_render(track_t *t, int32_t *out, uint32_t n)
 {
     const engine_t *e = ENGINES[t->engine];
@@ -1263,6 +1371,27 @@ static uint32_t track_render(track_t *t, int32_t *out, uint32_t n)
         uint32_t medm = 0;                              /* bit per EDIT value the matrix moves */
         int mpe;
 #endif
+        if ((v->pend & VP_ON) && !v->active && !fade) {   /* (SLOOP 2.8.3) faded out: the sample's note, from silence */
+            uint32_t pf = v->pend;
+            v->pend = 0;
+            if (voice_room(t, 0)) {                     /* (it was not counted while fading: within the budget) */
+                voice_start(t, v, v->pend_note, v->pend_vel, (pf & VP_GLIDE) != 0);
+                if (pf & VP_UNI) {                      /* (after Clipper 1.2) UNISON: not in phase with the others */
+                    static uint32_t seed = 0x13579BDu;
+                    seed = seed * 1664525u + 1013904223u;
+                    unison_spread(t, v, seed);
+                }
+                if (pf & VP_OFF) {                      /* let go within the fade (~1.5 ms): released as it starts, */
+                    if (voice_poly((int)voice_mode(t)) &&     /* or held by the sustain pedal */
+                        part_ctl[CLIPPER_SYNTH ? ctl_part(t) : (uint32_t)(t - trk) % NPART].sus)
+                        v->sus = 1;
+                    else {
+                        v->gate = 0;
+                        v->stage = 3;
+                    }
+                }
+            }
+        }
         if (!v->active)
             continue;
 #if CLIPPER_SYNTH
@@ -1348,6 +1477,10 @@ static uint32_t track_render(track_t *t, int32_t *out, uint32_t n)
                 env = e->amp(t, v, env);
             m.envq15 = e->ownenv ? 0 : env;
             m.amp1 = e->ownenv ? env : mulq15(env, v->vel * 258);
+#if CLIPPER_SYNTH
+            if (e == &ENG_FMX && t->p[P_VOICE] >= V_UNISON)   /* (after Clipper 1.2) FMX: UNISON's level per voice */
+                m.amp1 = mulq15(m.amp1, uni_level(t));
+#endif
             if (p[P_LD_AMP])
                 m.amp1 = mulq15(m.amp1, 32767 - mulq15((lfo + 32768) >> 1, p[P_LD_AMP] * 258));
 #if CLIPPER_SYNTH

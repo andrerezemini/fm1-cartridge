@@ -303,6 +303,88 @@ int main(void)
         assert(!strcmp((const char *)p + CART_VAL_NAME, "BREAK"));
         printf("felucca: SAMPLE SET and SLICE SRC pass over the empty user slots\n");
     }
+    /* Melodee: a track keeps only the note inserts, the shared rack every audio effect. The knob passes over the
+     * unnamed entries of their lists (a retired effect, the other rack's types), DRIVE's shapes are named, the
+     * rack's one REVERB moves to the slot that picks it, and MIDI Track (no audio) is not offered. */
+    if (!strcmp(synth->name, "MELODEE")) {
+        static const char *const rack[] = {"OFF", "PHASER", "WIDTH", "FORMANT", "TAPE", "SPIT", "ROOM", "REVERB",
+                                           "CHORUS", "DRIVE SOFT", "DRIVE HARD", "DRIVE FOLD", "DRIVE FUZZ", "CRUSH",
+                                           "FLANGER", "PEDAL PHASER", "PEDAL CHORUS"};
+        static int16_t pcm[2 * 11025];
+        unsigned drum = 0;
+        for (unsigned e = 0; e < synth->engine_count(); ++e) {
+            assert(strcmp(synth->engine_name(e), "MIDI Track"));
+            if (!strcmp(synth->engine_name(e), "DRUM")) drum = e;
+        }
+        assert(drum && synth->set_preset(drum, 0) == 0 && !synth->set_midi_channel(0));
+        command(CART_QUERY, 0);
+        int kit = entry_named("ENG KIT");                  /* (its names start at value 4) */
+        fm1_param_t d;
+        assert(kit > 0 && !cartridge_remote_param_set(&server, kit, 5) && !cartridge_remote_param_get(&server, kit, &d) &&
+               !strcmp(d.text, "909"));
+        double tail[3];                                    /* dry, shared REVERB on the send, NOTE ECHO */
+        for (unsigned run = 0; run < 3; ++run) {
+            assert(synth->init(44100) == 0 && synth->set_preset(0, 0) == 0);
+            command(CART_QUERY, 0);
+            int fx1 = entry_named("FX1 TYPE"), fx2 = entry_named("FX2 TYPE"), send = entry_named("SEND SEND");
+            int note = entry_named("NOTE1 NOTE FX");
+            assert(fx1 > 0 && fx2 > 0 && send > 0 && note > 0);
+            if (run == 0) {
+                command(CART_PARAM, -8192); command(CART_PARAM, fx1);
+                for (unsigned k = 1; k < sizeof rack / sizeof rack[0]; ++k) {
+                    command(CART_VALUE, 1);
+                    assert(!strcmp((const char *)p + CART_VAL_NAME, rack[k]));
+                }
+                assert(command_status(CART_VALUE, 1) == CART_BAD_REQUEST);   /* the end of the list */
+                assert(cartridge_remote_param_set(&server, fx1, 6) == -1 && cartridge_remote_param_set(&server, fx1, 10) == -1);
+                assert(!cartridge_remote_param_set(&server, fx1, 8) && !cartridge_remote_param_set(&server, fx2, 8));
+                assert(!cartridge_remote_param_get(&server, fx1, &d) && !strcmp(d.text, "OFF"));
+                assert(!cartridge_remote_param_get(&server, fx2, &d) && !strcmp(d.text, "REVERB"));
+                command(CART_PARAM, note - fx1);
+                assert(!cartridge_remote_param_get(&server, note, &d) && d.min == 0 && !strcmp(d.text, "OFF"));
+                command(CART_VALUE, 1); assert(!strcmp((const char *)p + CART_VAL_NAME, "NOTE TAIL"));
+                command(CART_VALUE, 1); assert(!strcmp((const char *)p + CART_VAL_NAME, "NOTE ECHO"));
+                assert(command_status(CART_VALUE, 1) == CART_BAD_REQUEST && cartridge_remote_param_get(&server, note, &d) == 0 &&
+                       d.max == d.value);
+                assert(entry_named("NOTE1 LEVEL") == note + 1 && entry_named("NOTE1 TIME") == note + 2);   /* its controls */
+                assert(synth->init(44100) == 0 && synth->set_preset(0, 0) == 0);
+            } else if (run == 1) {
+                assert(!cartridge_remote_param_set(&server, fx1, 8) && !cartridge_remote_param_set(&server, send, 127));
+            } else {
+                assert(!cartridge_remote_param_set(&server, note, 11));   /* NOTE ECHO, from its starting controls */
+            }
+            synth->midi(0x90, 60, 110); synth->render(pcm, 4410); synth->midi(0x80, 60, 0);
+            synth->render(pcm, 11025);                     /* the release */
+            synth->render(pcm, 11025);
+            tail[run] = 0;
+            for (unsigned i = 0; i < 2u * 11025u; ++i) tail[run] += (double)pcm[i] * pcm[i];
+        }
+        assert(tail[1] > 100.0 * (tail[0] + 1.0) && tail[2] > 100.0 * (tail[0] + 1.0));
+        /* every effect of the rack, on the part's send, changes what each engine plays */
+        for (unsigned e = 0; e < synth->engine_count(); ++e) {
+            uint32_t dry = 0, changed = 0;
+            for (int type = 0; type < 20; ++type) {
+                assert(synth->init(44100) == 0 && synth->set_preset(e, 0) == 0);
+                command(CART_QUERY, 0);
+                int fx1 = entry_named("FX1 TYPE"), send = entry_named("SEND SEND");
+                if (cartridge_remote_param_set(&server, fx1, type)) continue;
+                assert(!cartridge_remote_param_set(&server, send, 127));
+                uint32_t h = 2166136261u;
+                synth->midi(0x90, 48, 110); synth->midi(0x90, 55, 100); synth->midi(0x90, 64, 90);
+                for (unsigned b = 0; b < 2; ++b) {             /* held, then released */
+                    if (b) { synth->midi(0x80, 48, 0); synth->midi(0x80, 55, 0); synth->midi(0x80, 64, 0); }
+                    synth->render(pcm, b ? 11025 : 4410);
+                    for (unsigned i = 0; i < (b ? 2u * 11025u : 2u * 4410u); ++i) h = (h ^ (uint16_t)pcm[i]) * 16777619u;
+                }
+                if (!type) dry = h;
+                else { assert(h != dry); changed++; }
+            }
+            assert(changed == sizeof rack / sizeof rack[0] - 1u);
+        }
+        printf("melodee: the rack and note insert lists pass over their unnamed entries, one REVERB, "
+               "every rack effect changes the part, the rack's and NOTE ECHO's tails sound\n");
+        cartridge_remote_init(&server, synth, &fake_slots, 99);
+    }
 
     /* The state record: a sound with edits and a MIDI channel comes back after a fresh start, and a
      * record from elsewhere (another synth or revision, short, malformed) changes nothing. */

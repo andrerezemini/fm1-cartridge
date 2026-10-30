@@ -29,6 +29,11 @@ endfunction()
 fm1_synth_library(clipper_synth clipper)
 fm1_synth_library(felucca_synth felucca)
 fm1_synth_library(melodee_synth melodee -ffp-contract=off)
+if(FM1_SANITIZE AND CMAKE_SIZEOF_VOID_P EQUAL 8)
+    # Melodee's audio arena hands out 4-byte-aligned blocks, the alignment of its 32-bit targets; the SLOOP
+    # inserts keep a pointer in theirs, which a 64-bit host aligns to 8. Bounds and the other checks stay.
+    target_compile_options(melodee_synth PRIVATE -fno-sanitize=alignment)
+endif()
 
 enable_testing()
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
@@ -51,9 +56,9 @@ function(fm1_port_targets port engines revision)
     add_test(NAME simulation_${port} COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_simulation.py $<TARGET_FILE:cartridge_sim_${port}>)
 endfunction()
-fm1_port_targets(clipper 23 e69067211c4690f34e494b5b896e4585163dcc2b)
-fm1_port_targets(felucca 13 63f88ec18b71c6ed4371d03d6f04dd93f4193ad3)
-fm1_port_targets(melodee 5 398ada1e09d864c12f3b778a43e45c7c2a8031b8)
+fm1_port_targets(clipper 23 fbd8434e7b501ec5d772f5c5f656c25735929369)
+fm1_port_targets(felucca 13 d7b1b7c4099bba28854869ddb256b3d9f634cee8)
+fm1_port_targets(melodee 5 6a608ba122ac42293908d394e26713e31ec52fb0)
 # the Clipper's own simulator name and tests, as documented
 add_executable(cartridge_sim sim/main.c)
 target_link_libraries(cartridge_sim PRIVATE fm1_protocol clipper_synth)
@@ -66,6 +71,13 @@ foreach(test_name protocol audio_return clipper)
 endforeach()
 add_test(NAME upstream_integrity COMMAND ${Python3_EXECUTABLE}
     ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_upstream.py)
+# The cartridge manager (web/): its catalogue against the build, its local server, and its flash parsers (Node)
+add_test(NAME catalog COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_catalog.py)
+add_test(NAME cartridge_web COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_cartridge_web.py)
+find_program(FM1_NODE node)
+if(FM1_NODE)
+    add_test(NAME web_manager COMMAND ${FM1_NODE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_web.mjs)
+endif()
 # The audio return end to end, ESP32 ring and URBs to Sloop's receiver, with the buffers the firmware's
 # sources set (audio_tx.c, Kconfig.projbuild, sdkconfig.defaults; usb_host_uac's 3 URBs unless overridden);
 # an edit to any of them configures again.

@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio)
  * Portions Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments */
+#include "performance_options.h"
 /* Voice allocation, envelopes, LFO and per-track rendering.
  * Runs in the audio ISR.
  *
@@ -224,7 +225,7 @@ static uint32_t voice_kills;                            /* voices given up (budg
 static uint32_t voice_kills_part[NPART];                /* identify the audible victim, not only total load */
 static void voice_kill(voice_t *v)                      /* fade out over the next block (env_tick stage 4) */
 {
-    uint32_t part = ((uintptr_t)v - (uintptr_t)trk) / sizeof(track_t);
+    uint32_t part = voice_part(v);
     v->gate = 0;
     v->stage = 4;
     voice_kills++;
@@ -369,7 +370,10 @@ static void voice_start(track_t *t, voice_t *v, uint32_t note, uint32_t vel, int
     const engine_t *e = ENGINES[t->engine];
     int sounding = v->active && v->stage != 0;
     uint32_t ph0 = v->ph[0], ph1 = v->ph[1], ph2 = v->ph[2];
-    int32_t s0 = v->s[0], s1 = v->s[1], s4 = v->s[4], s5 = v->s[5], s6 = v->s[6], s7 = v->s[7];
+    int32_t s0 = v->s[0], s1 = v->s[1], s4 = v->s[4], s5 = v->s[5];
+#if MELODEE_LEGACY_EXTRAS
+    int32_t s6 = v->s[6], s7 = v->s[7];
+#endif
     uint32_t keep = e->keep;
     /* MIDI replaces a repeated press by releasing its old owner first. A
      * same-pitch one-shot then retriggers the same circuit regardless of gate;
@@ -407,10 +411,12 @@ static void voice_start(track_t *t, voice_t *v, uint32_t note, uint32_t vel, int
             v->s[4] = s4;
         if (keep & 0x20u)
             v->s[5] = s5;
+#if MELODEE_LEGACY_EXTRAS
         if (keep & 0x40u)
             v->s[6] = s6;
         if (keep & 0x80u)
             v->s[7] = s7;
+#endif
     }
 }
 
@@ -490,7 +496,7 @@ static int trk_chord(const track_t *t) { return ENGINES[t->engine] == &ENG_SID &
 static void trk_note_on_work(track_t *t, uint32_t note, uint32_t vel)
 {
     uint32_t any = 0, i, mode = trk_vmode(t);
-    if (t->p[P_MUTE] || (uint32_t)(t - trk) >= trk_n())   /* (a track not in use: silent) */
+    if (t->p[P_MUTE] || (uint32_t)(t - trk) >= trk_parts())   /* (a track not in use, a MIDI-only one: silent) */
         return;
     if (t->xf_on || t->eng_req != t->engine) {          /* engine switch under way: after the fade */
         for (i = 0; i < t->xp_n && t->xp_note[i] != note; i++)
@@ -536,7 +542,7 @@ static void trk_note_on_work(track_t *t, uint32_t note, uint32_t vel)
     }
 }
 
-static void trk_note_on(track_t *t,uint32_t note,uint32_t vel)
+static void trk_note_on_engine(track_t *t,uint32_t note,uint32_t vel)
 {
 #if MELODEE_ADMISSION
     const track_t *previous=voice_admitting;uint8_t previous_parts=voice_admitting_p5parts;
@@ -549,7 +555,7 @@ static void trk_note_on(track_t *t,uint32_t note,uint32_t vel)
 #endif
 }
 
-static void trk_note_off(track_t *t, uint32_t note)
+static void trk_note_off_engine(track_t *t, uint32_t note)
 {
     uint32_t i, k = 0, mode = trk_vmode(t), chord = trk_chord(t), held = 0;
     for (i = 0; i < t->xp_n; i++)                       /* not sounding yet (engine switch): forget it */
@@ -585,8 +591,26 @@ static void trk_note_off(track_t *t, uint32_t note)
         }
 }
 
+#include "midi_track.c"
+#include "midi_insert.c"
+/* All ordinary notes go through the persistent per-track MIDI inserts. */
+static void trk_note_on(track_t *t, uint32_t note, uint32_t vel)
+{
+    if (midi_track_only(t)) {
+        if (vel) midi_track_note_on(t, note, vel); else midi_track_note_off(t, note);
+    } else if (vel) trk_note_on_raw(t, note, vel); else trk_note_off_raw(t, note);
+}
+static void trk_note_off(track_t *t, uint32_t note)
+{
+    midi_track_note_off(t, note); /* releases retain their original output channel */
+    if (!midi_track_only(t)) trk_note_off_raw(t, note);
+}
+
 static void trk_all_off(track_t *t)
 {
+    midi_track_all_off(t);
+    midi_insert_cancel((uint32_t)(t - trk));
+    memset(midi_insert.held[t-trk], 0, sizeof midi_insert.held[0]);
     uint32_t i;
     for (i = 0; i < NVOICE; i++) {
         t->v[i].gate = 0;
@@ -635,7 +659,7 @@ static void engine_block(track_t *t)
             uint32_t n = t->xp_n;
             t->xp_n = 0;
             for (i = 0; i < n; i++)
-                trk_note_on(t, t->xp_note[i], t->xp_vel[i]);
+                trk_note_on_raw(t, t->xp_note[i], t->xp_vel[i]);
         }
     }
     for (i = 0; i < 8u; i++)                            /* the engine's own values, for a later fade */
@@ -659,7 +683,7 @@ static int32_t env_tick(track_t *t, voice_t *v)
         v->env += mulq16(sus - v->env, ENV_EXP[p[P_DEC] & 127]);
         break;
     case 3:
-        v->env -= mulq16(v->env, ENV_EXP[p[P_REL] & 127]);
+        v->env -= mulq16(v->env, ENV_EXP[midi_verb[t-trk] ? midi_verb[t-trk] : p[P_REL] & 127]);
         if (v->env < (1 << 12)) {
             v->env = 0;
             v->stage = 0;
@@ -700,9 +724,6 @@ static __attribute__((noinline)) void spread_sum(int32_t *out)
 /* render one block of a part into out (cleared here); returns the voices rendered */
 /* Channel bend is live performance state, outside projects/presets. Q8 semitones. */
 static int32_t midi_bend_q8[NTRK], midi_bend_target[NTRK];
-#ifndef MELODEE_CONTROL_FAST
-#define MELODEE_CONTROL_FAST 1
-#endif
 static __attribute__((noinline)) void p5_update_bend(track_t *t)
 {
 #if MELODEE_CONTROL_FAST
@@ -752,6 +773,10 @@ static void engine_render(track_t *t,voice_t *v,const engine_t *e,int32_t *out,u
  * the ISR's code footprint and permits an independent target cost check. */
 static __attribute__((noinline)) uint32_t track_render_audio(track_t *t, int32_t *out, uint32_t n, int clear_idle)
 {
+    if (t->engine == ENGI_MIDI) {
+        if (clear_idle) memset(out, 0, n * sizeof *out);
+        return 0;
+    }
     const engine_t *e = ENGINES[t->engine];
     const int16_t *p = t->p;
     uint32_t i;

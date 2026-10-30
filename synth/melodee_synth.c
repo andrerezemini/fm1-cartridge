@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-3.0-only
- * Portable adapter to the actual Melodee DSP (keremimo/melodee 1.4.5), not an emulation of its
+ * Portable adapter to the actual Melodee DSP (keremimo/melodee 1.5.1), not an emulation of its
  * sound. Upstream sources retain their copyright and license notices. The include order is the
  * one of tests/hostsim.c upstream: the DSP, without the USB device, the UI, storage or the HAL.
  * One core: the AC7911's second core (MELODEE_DUAL_CORE) is not here, upstream's serial path is. */
@@ -8,10 +8,15 @@
 
 #define MELODEE_DUAL_CORE 0
 #define MELODEE_USB_AUDIO 0
+#define MELODEE_USB_HOST 0
 #define MELODEE_CDC 0
 #define MELODEE_FLASH 0
 #define MELODEE_OTA 0
 #define MELODEE_AUDIO_PROFILE 0
+#define MELODEE_RAM_AUDIO 0      /* hostsim's serial admission policy: a 16-unit voice budget, as one core has */
+/* No MIDI-only tracks (upstream's tracks 5..8, NMIDI = 0 as in its capacity tests): their notes would leave
+ * through MIDI out, which the cartridge does not have; the four parts keep upstream's layout */
+#define NMIDI 0u
 /* the audio working-memory arena (resources.c): one part's engine state and its FX; the host's
  * 160 KB is more than the cartridge needs, the ESP32 keeps it in internal RAM */
 #ifndef RESOURCE_HOST_WORDS
@@ -58,9 +63,14 @@ static void fm1_irq_on(void) {}
 #define MQ 64u
 static uint32_t midi_in_q[MQ], midi_in_ms[MQ], midi_in_time[MQ];
 static uint8_t midi_in_source[MQ];
+static uint16_t midi_in_pulse[MQ], midi_rx_pulses;   /* usb.c midi_enqueue: the clocks counted before admission */
 static volatile uint32_t mi_w, mi_r;
 static volatile uint8_t midi_in_overflow;    /* set by the port when its queue overflows: events_block releases every note */
-static void midi_out_event(uint32_t packet) { (void)packet; }   /* the FM-1 is the host: no MIDI out */
+static volatile uint8_t midi_usb_lost;       /* usb.c: a host session that ended (never here: the FM-1 is the device) */
+/* No MIDI out: the cartridge is the USB host of the FM-1, which plays it. Every packet is taken and dropped, so
+ * no release waits for an output that never comes (usb.c midi_track_emit) */
+static int midi_track_emit(uint32_t packet) { (void)packet; return 1; }
+static void midi_out_event(uint32_t packet) { (void)midi_track_emit(packet); }
 /* upstream usb.c's block timeline (the ISR's): events are not timed here, every one plays at its block */
 #define MIDI_TIME_NOW() fm1_ms
 #define MIDI_TICKS_PER_MS 1u
@@ -103,6 +113,7 @@ static void clear_effects(void)
 {
     memset(fx_state, 0, sizeof fx_state);
     for (uint32_t k = RES_FX0; k < RES_FX0 + FX_STATE_COUNT; ++k) resource_release(k);
+    punch_reset();                        /* (the master punch: idle, it has no keys here) */
     memset(mix_cache, 0, sizeof mix_cache);
     dc_l = dc_r = dce_l = dce_r = 0;      /* the master's DC blocker (mix.c master_out) */
     lim_env = LIM_T;
@@ -124,7 +135,8 @@ static void melodee_panic(void)
     for (i = 0; i < NTRK; ++i) {
         track_t *t = &trk[i];
         trk_all_off(t);
-        memset(t->v, 0, sizeof t->v);
+        memset(t->v, 0, NVOICE * sizeof *t->v);
+        chord_auto_forget(i);
         t->nheld = t->arp_phys = t->latched = t->nmono = t->xp_n = 0;
         t->arp_note = 0;
         t->xf_on = t->xf = 0;
@@ -132,9 +144,12 @@ static void melodee_panic(void)
         t->mw = t->at = t->ex_off = t->foot = t->breath = t->porta = 0;
         t->bend_raw = 0;
     }
+    midi_insert_init();                    /* the NOTE ECHO repeats still due, the NOTE TAIL releases */
+    chord_auto_clock = 0;
     memset(midi_ch, 0, sizeof midi_ch);
     memset(midi_sel_on, 0, sizeof midi_sel_on);
     memset(midi_owners, 0, sizeof midi_owners);
+    memset(midi_owner_trs, 0, sizeof midi_owner_trs);
     memset(mchord, 0, sizeof mchord);
     midi_hint = 0;
     memset(midi_bend_target, 0, sizeof midi_bend_target);
@@ -186,7 +201,7 @@ static void load_preset(uint32_t e, uint32_t pi, int fade)
         panic_req |= 1u;
     } else {
         trk_all_off(t);
-        memset(t->v, 0, sizeof t->v);
+        memset(t->v, 0, NVOICE * sizeof *t->v);
     }
     for (i = 0; i < P_E0; ++i)
         t->p[i] = TP[i].def;
@@ -211,7 +226,7 @@ static void load_preset(uint32_t e, uint32_t pi, int fade)
     }
     if (fade && drum && drum_layout(t) != drum) {   /* another DRUM layout under the hits: no fade */
         trk_all_off(t);
-        memset(t->v, 0, sizeof t->v);
+        memset(t->v, 0, NVOICE * sizeof *t->v);
         t->xf_on = t->xf = 0;
     }
     if (fade && t->xf_on && t->engine == e)
@@ -255,13 +270,16 @@ static int melodee_init(uint32_t sample_rate)
     melodee_panic();
     memset(&song, 0, sizeof song);
     memset(trk, 0, sizeof trk);
+    trk_voices_bind();                 /* the parts' voices (main.c melodee_init), all silent */
     memset(&fm1_in, 0, sizeof fm1_in);
     memset(resource, 0, sizeof resource);
     rng_state = 0x1234567u;
     mod_seed = 0x2545F491u;
     vage = 0;
     rendered_frames = fm1_ms = 0;
+    midi_rx_pulses = 0;
     dsp_tables_init();                 /* the RAM lookup tables (FM6), before anything renders */
+    midi_insert_init();
     cz_init();
     pattern_init();
     for (i = 0; i < G_COUNT; ++i)
@@ -303,6 +321,8 @@ static int melodee_midi(uint8_t status, uint8_t data1, uint8_t data2)
         if ((status & 0xF0) == 0xB0 && data1 >= 123) { melodee_release(); return 0; }   /* all notes off (and the modes) */
         cin = status >> 4;
     }
+    if (status == 0xF8)                            /* counted before admission (usb.c midi_enqueue): a clock lost */
+        ++midi_rx_pulses;                          /* with an overflow still moves the sequencer on (midi_clock.c) */
     if (mi_w - mi_r >= MQ) {
         midi_in_overflow = 1;
         melodee_panic();
@@ -313,6 +333,7 @@ static int melodee_midi(uint8_t status, uint8_t data1, uint8_t data2)
     midi_in_source[mi_w % MQ] = 1;
     midi_in_ms[mi_w % MQ] = fm1_ms;
     midi_in_time[mi_w % MQ] = 0;
+    midi_in_pulse[mi_w % MQ] = midi_rx_pulses;
     midi_in_q[mi_w++ % MQ] = cin | ((uint32_t)status << 8) | ((uint32_t)data1 << 16) | ((uint32_t)data2 << 24);
     return 0;
 }
@@ -358,9 +379,22 @@ static void melodee_render(int16_t *stereo, size_t frames)
     }
 }
 
-/* the engines as the FM-1 picks them: ENGINE_ORDER (the retired ones are not offered) */
-static uint32_t melodee_engine_count(void) { return NENG_SHOWN; }
-static uint32_t engine_of(uint32_t index) { return index < NENG_SHOWN ? ENGINE_ORDER[index] : NENGINES; }
+/* the engines as the FM-1 picks them: ENGINE_ORDER (the retired ones are not in it), without MIDI Track: it has
+ * no audio, its notes leave through MIDI out, which the cartridge does not have */
+static uint32_t melodee_engine_count(void)
+{
+    uint32_t i, n = 0;
+    for (i = 0; i < NENG_SHOWN; ++i)
+        n += ENGINE_ORDER[i] != ENGI_MIDI;
+    return n;
+}
+static uint32_t engine_of(uint32_t index)
+{
+    for (uint32_t i = 0; i < NENG_SHOWN; ++i)
+        if (ENGINE_ORDER[i] != ENGI_MIDI && !index--)
+            return ENGINE_ORDER[i];
+    return NENGINES;
+}
 static int melodee_set_preset(uint32_t engine, uint32_t preset)
 {
     uint32_t e = engine_of(engine);
@@ -379,31 +413,47 @@ static const char *melodee_preset_name(uint32_t engine, uint32_t preset)
     if (e >= NENGINES || preset >= ENGINES[e]->npresets) return NULL;
     return eng_preset(ENGINES[e], preset)->name;   /* (Prophet, CZ-1: made on demand, two held at once) */
 }
-static uint32_t melodee_current_engine(void) { return eng_rank(trk[0].eng_req); }
+static uint32_t melodee_current_engine(void)
+{
+    for (uint32_t i = 0; i < melodee_engine_count(); ++i)
+        if (engine_of(i) == trk[0].eng_req)
+            return i;
+    return 0;
+}
 static uint32_t melodee_current_preset(void) { return trk[0].preset; }
 
-/* Remote catalogue, beside the real descriptors: the part's sound, modulation, its FX slots and
- * the shared master slots. */
+/* Remote catalogue, beside the real descriptors: the part's sound and modulation, its three note inserts (a
+ * track keeps only NOTE TAIL and NOTE ECHO upstream; their TONE is unused) and its sends, then the shared rack,
+ * where every audio effect is, and the master. */
 typedef struct { uint16_t first, last; const char *group; } remote_group_t;
 #define RG(a, b, s) {a, b, s}
 #define GG(a, b, s) {P_COUNT + a, P_COUNT + b, s}
 static const remote_group_t remote_groups[] = {
     RG(P_E0, P_E7, "ENG"), RG(P_ATK, P_REL, "ENV"), RG(P_ED_FLT, P_ED_SHP, "ENV"),
     RG(P_LEVEL, P_LEVEL, "AMP"), RG(P_LRATE, P_LD_AMP, "LFO"), RG(P_LSYNC, P_LPOL, "LFO"),
-    RG(P_FXTYPE, P_FXCHAR, "FX1"), RG(P_FXTONE, P_FXTONE, "FX1"),
-    RG(P_FX2TYPE, P_FX2CHAR, "FX2"), RG(P_FX2TONE, P_FX2TONE, "FX2"),
-    RG(P_FX3TYPE, P_FX3CHAR, "FX3"), RG(P_FX3TONE, P_FX3TONE, "FX3"), RG(P_FXSEND, P_FXSEND3, "SEND"),
+    RG(P_FXTYPE, P_FXCHAR, "NOTE1"), RG(P_FX2TYPE, P_FX2CHAR, "NOTE2"), RG(P_FX3TYPE, P_FX3CHAR, "NOTE3"),
+    RG(P_FXSEND, P_FXSEND3, "SEND"),
     RG(P_VOICE, P_MUTE, "VOICE"), RG(P_SPRD, P_SPRD, "VOICE"),
     RG(P_AMODE, P_AORDER, "ARP"), RG(P_CHRD, P_VOIC, "CHORD"), RG(P_STRUM, P_STROKE, "CHORD"),
     RG(P_ROOT, P_TRANS, "SCALE"), RG(P_M1SRC, P_M4AMT, "MATRIX"), RG(P_LN0, P_LN7, "DRUM"),
     GG(G_BPM, G_SWING, "CLOCK"), GG(G_TUNE, G_TUNE, "MASTER"),
-    GG(G_MFXTYPE, G_MFXCHAR, "MFX1"), GG(G_MFXTONE, G_MFXTONE, "MFX1"),
-    GG(G_MFX2TYPE, G_MFX2CHAR, "MFX2"), GG(G_MFX2TONE, G_MFX2TONE, "MFX2"),
-    GG(G_MFX3TYPE, G_MFX3CHAR, "MFX3"), GG(G_MFX3TONE, G_MFX3TONE, "MFX3"),
-    GG(G_FXRETURN, G_FXMODE, "MFX")
+    GG(G_MFXTYPE, G_MFXCHAR, "FX1"), GG(G_MFXTONE, G_MFXTONE, "FX1"),
+    GG(G_MFX2TYPE, G_MFX2CHAR, "FX2"), GG(G_MFX2TONE, G_MFX2TONE, "FX2"),
+    GG(G_MFX3TYPE, G_MFX3CHAR, "FX3"), GG(G_MFX3TONE, G_MFX3TONE, "FX3"),
+    GG(G_FXRETURN, G_FXMODE, "FX")
 };
 #undef RG
 #undef GG
+
+/* an enum value upstream's knob passes over (params.c enum_orig: no name of its own, as a retired effect or a
+ * note insert in the shared rack's list); the range the catalogue gives ends at named values */
+static int enum_alias(const param_desc_t *d, int32_t v) { return d->fmt == F_ENUM && d->names && !d->names[v][0]; }
+static void remote_range(const param_desc_t *d, int32_t *min, int32_t *max)
+{
+    *min = d->min; *max = d->max;
+    while (*max > *min && enum_alias(d, *max)) --*max;
+    while (*min < *max && enum_alias(d, *min)) ++*min;
+}
 
 static int melodee_set_midi_channel(uint32_t channel)
 {
@@ -422,7 +472,8 @@ static const param_desc_t *remote_desc(uint32_t index, int16_t **value, uint32_t
     }
     for (uint32_t g = 0; g < NELEM(remote_groups); ++g) {
         for (uint32_t id = remote_groups[g].first; id <= remote_groups[g].last; ++id) {
-            const param_desc_t *d = id < P_COUNT ? track_desc(&trk[0], id) : &GP[id - P_COUNT];
+            /* (the labels and formats follow the effect in the slot, as on the device's pages) */
+            const param_desc_t *d = id < P_COUNT ? track_desc(&trk[0], id) : global_desc(id - P_COUNT);
             if (!d || !d->label || !d->label[0] || d->label[0] == '-' || d->max <= d->min) continue;
             if (pos++ == index) {
                 *pid = id; *group = remote_groups[g].group;
@@ -442,34 +493,53 @@ static uint32_t melodee_param_count(void)
 }
 static int melodee_param_get(uint32_t index, fm1_param_t *out)
 {
-    uint32_t id; int16_t *v; const char *group, *unit;
+    uint32_t id; int16_t *v; const char *group, *unit; int32_t min, max;
     const param_desc_t *d = ready ? remote_desc(index, &v, &id, &group) : NULL;
     if (!d || !out) return -1;
     memset(out, 0, sizeof *out);
-    out->min = d->min; out->max = d->max; out->value = (int16_t)clamp(*v, d->min, d->max);
+    remote_range(d, &min, &max);
+    out->min = (int16_t)min; out->max = (int16_t)max; out->value = (int16_t)clamp(*v, min, max);
     str_cpy(out->name, group, sizeof out->name);
     uint32_t n = str_len(out->name);
     if (id >= P_M1SRC && id <= P_M4AMT) { fmt_int(out->name + n, (int32_t)((id - P_M1SRC) / 3u + 1u)); n = str_len(out->name); }
     out->name[n++] = ' '; out->name[n] = 0;
     str_cpy(out->name + n, d->label, sizeof out->name - n);
     param_format(d, out->value, out->text, &unit);
-    /* The device's tiny columns abbreviate enums. Our full-width row needn't. */
-    if (d->fmt == F_ENUM && d->names)
-        str_cpy(out->text, d->names[out->value - d->min], sizeof out->text);
+    /* The device's tiny columns abbreviate enums. Our full-width row needn't. Upstream indexes the names by
+     * value (DRUM's KIT starts at 4); DRIVE's four effects are its SHAPE, the device's KNOB 4 */
+    if (d->fmt == F_ENUM && d->names) {
+        str_cpy(out->text, d->names[out->value], sizeof out->text);
+        if (fx_names(d) && fx_drive(out->value)) {
+            n = str_len(out->text); out->text[n++] = ' ';
+            str_cpy(out->text + n, N_SHAPE[out->value], sizeof out->text - n);
+        }
+    }
     str_cpy(out->unit, unit, sizeof out->unit);
     return 0;
 }
 static int melodee_param_set(uint32_t index, int32_t value)
 {
-    uint32_t id; int16_t *v; const char *group;
+    uint32_t id; int16_t *v; const char *group; int32_t min, max;
     const param_desc_t *d = ready ? remote_desc(index, &v, &id, &group) : NULL;
-    if (!d || value < d->min || value > d->max) return -1;
+    if (!d) return -1;
+    remote_range(d, &min, &max);
+    if (value < min || value > max || enum_alias(d, value)) return -1;
+    if (id >= P_COUNT + G_MFXTYPE && id <= P_COUNT + G_MFX3CHAR && (id - P_COUNT - G_MFXTYPE) % FX_PARAMS == 0u) {
+        /* the shared rack holds one REVERB: choosing it moves it there (the editor's and the UI's path) */
+        shared_fx_select(song.g, (id - P_COUNT - G_MFXTYPE) / FX_PARAMS, value);
+        return 0;
+    }
+    if (id >= P_FXTYPE && id <= P_FX3CHAR && (id - P_FXTYPE) % FX_PARAMS == 0u && *v != value && fx_is_midi(value)) {
+        /* a note insert starts from useful controls, as the device's knob gives it (ui_input.c) */
+        if (!v[1]) v[1] = 64;
+        if (value == FX_MIDIDELAY) { v[2] = 1; v[3] = 64; }
+    }
     *v = (int16_t)value;
     return 0;
 }
 
 static const fm1_synth_api_t melodee_api = {
-    .name = "MELODEE", .revision = "398ada1e09d864c12f3b778a43e45c7c2a8031b8",
+    .name = "MELODEE", .revision = "6a608ba122ac42293908d394e26713e31ec52fb0",
     .init = melodee_init, .midi = melodee_midi, .render = melodee_render, .panic = melodee_panic,
     .release = melodee_release,
     .set_preset = melodee_set_preset, .engine_count = melodee_engine_count,

@@ -125,7 +125,9 @@ UNDERRUNS**, the times its audio fell behind since then.
 
 The cartridge keeps its sound for each firmware: the engine, the preset, MIDI CH and the edits are
 saved a few seconds after the last change, once nothing plays, and come back at the next start or
-when that firmware is chosen again. Sloop's projects do not save the cartridge's sound.
+when that firmware is chosen again. Sloop's projects do not save the cartridge's sound. The kept
+sound belongs to the firmware's upstream revision: a slot updated to another release starts from
+its default sound again.
 
 ## 8. Switch between Clipper, Melodee and Felucca
 

@@ -66,7 +66,7 @@ Reading:
 Run with the modified Sloop ([SLOOP_INTEGRATION.md](SLOOP_INTEGRATION.md)) and the Mac, before the ESP32 transmitter.
 
 - [ ] Build and map of the modified revision and of the baseline attached; relevant tests pass.
-- [ ] Audio MIDI Setup shows a two-channel, 44,100 Hz output from the FM-1, with USB SERIAL OFF.
+- [ ] Audio MIDI Setup shows a two-channel, 44,100 Hz output from the FM-1, with USB SERIAL OFF; on macOS 15 or earlier too (the AudioControl collection lists the streaming interface before MIDI, bcdDevice 4.08).
 - [ ] The host identifies ISO **OUT**, alt 1; when stopping, alt 0 or the timeout clears the return.
 - [ ] Test tone at low level, then L only and R only; measure gain and check that the channels are not swapped.
 - [ ] FM-1 physical output captured on an external interface or recorder; effects, master, limiter and the return mute verified.
@@ -84,7 +84,7 @@ Run with the modified Sloop ([SLOOP_INTEGRATION.md](SLOOP_INTEGRATION.md)) and t
 - [ ] `render_max_us`, `pass_max_us` and `underruns` on the UART (every 5 s) and AUDIO RENDER MAX / AUDIO UNDERRUNS on the CARTRIDGE page, per engine, with the 2,048 B ring and 64-frame renders; a WAVE table change in Clipper and fast PRESETS browsing during a sequence. If underruns appear, record them before changing `CONFIG_FM1_UAC_BUFFER_BYTES`.
 - [ ] MIDI CH changed while a note, a KBD HOLD chord and an arpeggio sound; the link coming up while keys are held; a preset change under a held pad in each synthesizer, PROPHET, FM6 and CZ-1 included (a fade, no click, tails ringing); Melodee DRUM 808 KIT → 909 KIT while a pattern plays (the hits cut, no reset); a Clipper WAVE table changed under a held note (silence, then a fade-in).
 - [ ] The cartridge unplugged and plugged back while a song plays: START reaches it on the next bar line, and a synced arpeggio or delay on the cartridge stays on Sloop's beat.
-- [ ] The return's start and re-prime (a replug, a slot switch): no click; USB RETURN, the cartridge track's LEVEL and MUTE: no zipper; the track's meter follows the return.
+- [ ] The return's start and re-prime (a replug, a slot switch): no click; USB RETURN, the cartridge track's LEVEL, MIDI EXPRESSION (CC 11) and MUTE: no zipper; the track's meter follows the return.
 - [ ] The cartridge's sound after a restart and after a slot switch back: engine, preset, MIDI CH and edits as left; an NVS write during silence leaves no audible gap.
 - [ ] Cartridge track with OUT at KEYS: the keys, steps, arpeggiator and a recorded take of track 1 play the cartridge while its internal engine stays silent; the footer and TRACKS show the cartridge's preset; PRESETS steps the cartridge's presets across engines; MUTE, STOP and MIDI CH = OMNI leave no stuck note.
 - [ ] One reference engine and preset per synthesizer before increasing voices; note program, parameters and seed when there is randomness.

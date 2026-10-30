@@ -18,11 +18,11 @@ menu "FM1 Cartridge"
             depends on SPIRAM
             select SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY
         config FM1_AUDIO_FELUCCA
-            bool "Felucca 1.6.1 synthesizer (USB-MIDI, experimental)"
+            bool "Felucca 1.7.0 synthesizer (USB-MIDI, experimental)"
             depends on SPIRAM
             select SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY
         config FM1_AUDIO_MELODEE
-            bool "Melodee 1.4.5 synthesizer (USB-MIDI, experimental)"
+            bool "Melodee 1.5.1 synthesizer (USB-MIDI, experimental)"
             depends on SPIRAM
             select SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY
     endchoice

@@ -103,7 +103,7 @@ static const param_desc_t *cz_ed_desc(uint32_t tr,uint32_t id,uint32_t slot,int1
     uint8_t p[LCZ_PACKED];
     *valp=0;
     if(id>=LCZ_NP || !CZ_PD[id].label)return 0;
-    cz_ed_decode(p,cz_patch[tr].raw);
+    cz_ed_decode(p,cz_patch_of(tr)->raw);
     cz_ed_cell[slot&3u]=p[id];*valp=&cz_ed_cell[slot&3u];
     return &CZ_PD[id];
 }
@@ -118,7 +118,7 @@ static int cz_ed_put(uint32_t tr,uint32_t id,uint32_t v,uint8_t *raw)
 {
     uint8_t p[LCZ_PACKED],base[CZ_BYTES],next[CZ_BYTES];
     if(id>=LCZ_NP || !CZ_PD[id].label)return 0;
-    memcpy(raw,cz_patch[tr].raw,CZ_BYTES);
+    memcpy(raw,cz_patch_of(tr)->raw,CZ_BYTES);
     cz_ed_decode(p,raw);lcz_sx_encode(p,base,1);
     if(id>=LCZ_EBASE(0,0) && id<LCZ_OLD_NP && (id-LCZ_EBASE(0,0))%18u==16u){
         uint32_t end=p[id+1u];
@@ -135,6 +135,6 @@ static int cz_ed_put(uint32_t tr,uint32_t id,uint32_t v,uint8_t *raw)
         if(x==128u)raw[i]=(uint8_t)((raw[i]&127u)|(next[i]&128u));
         else if(x)raw[i]=next[i];
     }
-    return cz_patch_valid(raw) && memcmp(raw,cz_patch[tr].raw,128u);
+    return cz_patch_valid(raw) && memcmp(raw,cz_patch_of(tr)->raw,128u);
 }
 #endif

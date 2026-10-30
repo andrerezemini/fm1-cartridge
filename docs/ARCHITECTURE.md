@@ -18,7 +18,7 @@ IN/OUT are always relative to the USB host. So MIDI IN leaves the FM-1; audio OU
 
 ## Why this topology
 
-- **The FM-1 is a USB device.** Its official firmware and Sloop drive the JieLi AC79/WL82 USB0 controller as a device only, and Sloop already sends keyboard notes over USB-MIDI (the sequencer, arpeggiator and rolls too with GLO → SYSTEM → OUT = SEQ; the cartridge track sends them with OUT at KEYS), and the clock and transport while the cartridge answers. Keeping the FM-1 as the device needs no host stack on it, whose application image has little free flash (468 B with the cartridge profile). Sloop only gains a UAC1 playback interface (ISO OUT 0x04), its receiver, the CARTRIDGE page and the cartridge track.
+- **The FM-1 is a USB device.** Its official firmware and Sloop drive the JieLi AC79/WL82 USB0 controller as a device only, and Sloop already sends keyboard notes over USB-MIDI (the sequencer, arpeggiator and rolls too with GLO → SYSTEM → OUT = SEQ; the cartridge track sends them with OUT at KEYS), and the clock and transport while the cartridge answers. Keeping the FM-1 as the device needs no host stack on it, whose application image has little free flash (7,520 B with the cartridge profile). Sloop only gains a UAC1 playback interface (ISO OUT 0x04), its receiver, the CARTRIDGE page and the cartridge track.
 - **The ESP32-S3 is the host.** It has native USB OTG (GPIO19 = D−, GPIO20 = D+), the ESP-IDF USB Host Library and a UAC host component (`espressif/usb_host_uac` 1.5.0) that transmits audio. Its 240 MHz cores, internal SRAM and PSRAM leave far more room for DSP than the FM-1, which keeps running its own instruments.
 - **The audio returns over USB into Sloop's mixer.** The FM-1 has no analog audio input, so the return is digital: the same USB connection carries MIDI and PCM, and the cartridge's stereo signal is summed in Sloop's mixer before the global effects, master and limiter, then leaves through the FM-1's own output and speaker. The cartridge needs no DAC and no audio connector.
 - **Bandwidth is not the constraint.** The payload at 44.1 kHz is `44,100 samples/s × 2 channels × 2 bytes = 176,400 bytes/s = 1.4112 Mbit/s`, well below the raw 12 Mbit/s of USB full speed even with protocol overhead; MIDI traffic is small by comparison. The constraints are servicing one isochronous packet every 1 ms and the drift between two independent clocks (below).
@@ -31,7 +31,7 @@ Measured on the Super Mini prototype, through a USB-C male-to-male adapter and w
 
 ## What runs on each side
 
-The adapters in `synth/` run the real DSP of three synthesizers at 44.1 kHz behind one interface, `synth/fm1_synth.h`: Clipper (23 engines, 407 factory presets), Felucca 1.6.1 (13 engines, 72 presets) and Melodee 1.4.5 (5 engines, 327 presets). The same interface serves the cartridge server (`synth/cartridge_remote.c`), the ESP32 audio task, the native simulator and the tests ([PORTS.md](PORTS.md)).
+The adapters in `synth/` run the real DSP of three synthesizers at 44.1 kHz behind one interface, `synth/fm1_synth.h`: Clipper 1.3 (23 engines, 407 factory presets), Felucca 1.7.0 (13 engines, 72 presets) and Melodee 1.5.1 (5 engines, 327 presets). The same interface serves the cartridge server (`synth/cartridge_remote.c`), the ESP32 audio task, the native simulator and the tests ([PORTS.md](PORTS.md)).
 
 The ESP-IDF 5.3.6 firmware builds one profile per synthesizer, plus a `midi` profile (the default, no audio) and a `tone` profile (a 440 Hz test tone over UAC); the `-4m2m` variants target the Super Mini prototype ([firmware](../firmware/README.md)). The flash holds **three firmware slots** (`ota_0..ota_2`, 1.25 MB each) with Clipper, Melodee and Felucca; the FM-1 chooses which one boots, and the bootloader rolls back a slot that never talks to the FM-1 ([FIRMWARE_SLOTS.md](FIRMWARE_SLOTS.md)).
 
@@ -71,9 +71,9 @@ Sloop's TIMER5 interrupt calls the UAC services during the render to meet the 1 
 ## Main open risks
 
 - **Power and VBUS (G0).** The Rd–Rd connection is outside the normal Type-C policy, the VBUS path with the cartridge attached is not settled, and the charger control is untested on the SoC.
-- **Real time on the ESP32 (G4).** The render cost of each engine (`render_max_us`) is not measured; Melodee is the heaviest in CPU and RAM (235 KB of 341 KB of internal RAM).
+- **Real time on the ESP32 (G4).** The render cost of each engine (`render_max_us`) is not measured; Melodee is the heaviest in CPU and RAM (228 KB of 341 KB of internal RAM).
 - **Clocks and latency (G2/G3).** The ASRC's cost and quality on the FM-1, the one-way latency and long-session stability are not measured; the latency figure above is a model.
-- **Sloop's flash headroom.** The cartridge profile leaves 468 B free in the application image.
+- **Sloop's flash headroom.** The cartridge profile leaves 7,520 B free in the application image.
 - **Firmware slots (G5).** Booting, switching and rollback are verified in software only.
 - **Battery and mechanics (G6).** Battery life, peak current and the strain of the cartridge on the FM-1's port are not measured.
 

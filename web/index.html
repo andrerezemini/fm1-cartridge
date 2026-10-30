@@ -1,0 +1,253 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: GPL-3.0-only -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cartridge Manager</title>
+<meta name="description" content="Install, update and inspect the synthesizer firmwares of the FM1 cartridge and the FM-1's Sloop from the browser.">
+<!-- esptool-js (Apache-2.0) talks to the ESP32-S3 ROM loader over Web Serial; pinned by version and hash -->
+<script type="importmap">
+{
+  "imports": { "esptool-js": "https://cdn.jsdelivr.net/npm/esptool-js@0.7.0/bundle.js" },
+  "integrity": { "https://cdn.jsdelivr.net/npm/esptool-js@0.7.0/bundle.js": "sha384-gg1uFHEfaf6612Q8/ovFzAYvLxRakqrLWyMjLe8LEMBP3+2qgUvxuYxTuk87KdIb" }
+}
+</script>
+<style>
+:root {
+  --bg: #f6f5f1; --panel: #ffffff; --panel-2: #efede6; --ink: #1d1c19; --muted: #6b675d; --line: #dcd8cc;
+  --accent: #c2581b; --accent-ink: #ffffff; --ok: #2f7d4f; --warn: #a86a00; --bad: #b3261e; --info: #285f9e;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #121211; --panel: #1b1a18; --panel-2: #24221f; --ink: #ece9e1; --muted: #a39e92; --line: #34312c;
+    --accent: #f08a4b; --accent-ink: #1b1a18; --ok: #6cc28f; --warn: #e3ac45; --bad: #f2867d; --info: #86b4ea;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #121211; --panel: #1b1a18; --panel-2: #24221f; --ink: #ece9e1; --muted: #a39e92; --line: #34312c;
+  --accent: #f08a4b; --accent-ink: #1b1a18; --ok: #6cc28f; --warn: #e3ac45; --bad: #f2867d; --info: #86b4ea;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+header { border-bottom: 1px solid var(--line); background: var(--panel); }
+.wrap { max-width: 1080px; margin: 0 auto; padding: 0 16px; }
+.top { display: flex; align-items: center; gap: 16px; padding: 14px 0 10px; flex-wrap: wrap; }
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 650; font-size: 17px; letter-spacing: .01em; }
+.brand svg { width: 26px; height: 26px; color: var(--accent); }
+.links { margin-left: auto; display: flex; gap: 8px; flex-wrap: wrap; }
+.chip { display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px; border: 1px solid var(--line); border-radius: 999px; font-size: 13px; color: var(--muted); background: var(--panel); white-space: nowrap; }
+.chip::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--line); }
+.chip.on { color: var(--ink); } .chip.on::before { background: var(--ok); }
+.chip.busy::before { background: var(--warn); }
+nav { display: flex; gap: 2px; overflow-x: auto; }
+nav button { appearance: none; border: 0; background: none; color: var(--muted); font: inherit; padding: 10px 14px; border-bottom: 2px solid transparent; cursor: pointer; white-space: nowrap; }
+nav button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); font-weight: 600; }
+main { padding: 20px 0 48px; }
+section[role="tabpanel"][hidden] { display: none; }
+h2 { font-size: 20px; margin: 0 0 4px; }
+h3 { font-size: 15px; margin: 0 0 8px; }
+p.lead { color: var(--muted); margin: 0 0 16px; max-width: 70ch; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin: 0 0 16px; }
+.row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
+.steps { margin: 0; padding-left: 20px; color: var(--muted); }
+.steps li { margin: 2px 0; }
+button.btn, label.btn { appearance: none; border: 1px solid var(--line); background: var(--panel-2); color: var(--ink); font: inherit; font-weight: 550; padding: 7px 14px; border-radius: 8px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+button.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+button.btn.danger { border-color: var(--bad); color: var(--bad); background: transparent; }
+button.btn:disabled { opacity: .45; cursor: not-allowed; }
+button.link { appearance: none; border: 0; background: none; color: var(--info); font: inherit; padding: 0; cursor: pointer; text-decoration: underline; }
+input[type="text"], select { font: inherit; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; max-width: 100%; }
+input[type="file"] { display: none; }
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th, td { text-align: left; padding: 8px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { color: var(--muted); font-weight: 550; font-size: 13px; }
+.scroll { overflow-x: auto; }
+.mono { font-family: var(--mono); font-size: 13px; }
+.muted { color: var(--muted); }
+.small { font-size: 13px; }
+.ok { color: var(--ok); } .warn { color: var(--warn); } .bad { color: var(--bad); }
+.badge { display: inline-block; font-size: 12px; padding: 0 7px; border-radius: 6px; border: 1px solid currentColor; margin-left: 6px; vertical-align: 1px; white-space: nowrap; }
+.kv { display: grid; grid-template-columns: max-content 1fr; gap: 2px 14px; font-size: 14px; }
+.kv dt { color: var(--muted); } .kv dd { margin: 0; overflow-wrap: anywhere; }
+progress { width: 100%; height: 8px; accent-color: var(--accent); }
+.callout { border-left: 3px solid var(--warn); background: var(--panel-2); padding: 10px 14px; border-radius: 6px; margin: 0 0 16px; font-size: 14px; }
+.callout.info { border-left-color: var(--info); }
+pre.log { background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 10px; max-height: 220px; overflow: auto; font: 12px/1.45 var(--mono); white-space: pre-wrap; margin: 0; }
+details summary { cursor: pointer; color: var(--muted); }
+.synth h3 { display: flex; align-items: baseline; gap: 8px; }
+.meter { height: 6px; border-radius: 3px; background: var(--panel-2); overflow: hidden; margin-top: 4px; }
+.meter > i { display: block; height: 100%; background: var(--accent); }
+.empty { color: var(--muted); font-style: italic; }
+footer { border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; padding: 16px 0 32px; }
+@media (max-width: 640px) { th.hide-sm, td.hide-sm { display: none; } .links { margin-left: 0; } }
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <div class="top">
+      <div class="brand">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 18v2M11 18v2M15 18v2M7 10h4M7 13h2"/><circle cx="16" cy="11.5" r="2.2"/></svg>
+        Cartridge Manager
+      </div>
+      <div class="links">
+        <span class="chip" id="chip-esp">Cartridge: not connected</span>
+        <span class="chip" id="chip-fm1">FM-1: not looked for</span>
+      </div>
+    </div>
+    <nav role="tablist" aria-label="Sections">
+      <button role="tab" aria-selected="true" aria-controls="tab-slots" id="t-slots">Slots</button>
+      <button role="tab" aria-selected="false" aria-controls="tab-synths" id="t-synths">Synths</button>
+      <button role="tab" aria-selected="false" aria-controls="tab-updates" id="t-updates">Updates</button>
+      <button role="tab" aria-selected="false" aria-controls="tab-fm1" id="t-fm1">FM-1 (Sloop)</button>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap">
+  <div class="callout" id="no-serial" hidden>This browser has no Web Serial: the cartridge can be read and written from Chrome or Edge on a computer. The catalogue and the update check work here.</div>
+
+  <!-- ===== Slots ===== -->
+  <section role="tabpanel" id="tab-slots" aria-labelledby="t-slots">
+    <h2>Firmware slots</h2>
+    <p class="lead">The cartridge's flash holds one synthesizer per slot; the FM-1 picks which one boots (GLO → CARTRIDGE → FIRMWARE). Here you read what each slot holds, back up the whole flash and write new firmwares into the slots.</p>
+
+    <div class="card">
+      <h3>1. Connect the cartridge</h3>
+      <ol class="steps">
+        <li>Unplug the cartridge from the FM-1 and plug it into this computer.</li>
+        <li>Put the ESP32 in its USB bootloader: hold <b>BOOT</b>, press and release <b>RESET</b>, release BOOT.</li>
+        <li>Press <b>Connect</b> and pick the <span class="mono">USB JTAG/serial</span> port.</li>
+      </ol>
+      <div class="row" style="margin-top:12px">
+        <button class="btn primary" id="esp-connect">Connect</button>
+        <button class="btn" id="esp-disconnect" disabled>Disconnect</button>
+        <label class="small muted"><input type="checkbox" id="esp-allports"> show every serial port</label>
+      </div>
+      <dl class="kv" id="esp-info" style="margin-top:12px" hidden></dl>
+    </div>
+
+    <div class="card" id="backup-card">
+      <h3>2. Back up the flash</h3>
+      <p class="small muted" style="margin:0 0 10px">A full image of the flash (bootloader, partition table, the kept sounds in nvs and every slot) to put back with <span class="mono">esptool.py write_flash 0 &lt;file&gt;</span> or the "Release image" card below. Writing stays locked until this board has a backup.</p>
+      <div class="row">
+        <button class="btn" id="backup-go" disabled>Back up the whole flash</button>
+        <label class="small"><input type="checkbox" id="backup-have" disabled> I already have a full backup of this board</label>
+      </div>
+      <progress id="backup-bar" value="0" max="1" hidden style="margin-top:10px"></progress>
+      <div class="small" id="backup-status" style="margin-top:6px"></div>
+    </div>
+
+    <div class="card">
+      <h3>3. Choose what goes into each slot</h3>
+      <div class="scroll">
+        <table id="slot-table">
+          <thead><tr><th>Slot</th><th>Holds now</th><th>Write</th><th class="hide-sm">Check</th></tr></thead>
+          <tbody><tr><td colspan="4" class="empty">Connect the cartridge to read its slots.</td></tr></tbody>
+        </table>
+      </div>
+      <div class="small" id="plan-full" style="margin-top:10px"></div>
+      <div class="row" style="margin-top:12px">
+        <button class="btn primary" id="write-go" disabled>Write</button>
+        <span class="small muted" id="write-why"></span>
+      </div>
+      <progress id="write-bar" value="0" max="1" hidden style="margin-top:10px"></progress>
+      <div class="small" id="write-status" style="margin-top:6px"></div>
+    </div>
+
+    <details class="card">
+      <summary>Release image (all slots in one file)</summary>
+      <p class="small muted">A tagged release carries the three synthesizers, the bootloader, the table and a clean otadata in one file per board (<span class="mono">fm1-cartridge-esp32s3-4m2m.bin</span> for the Super Mini). It is written at 0x0 and fills the gaps with 0xFF, so it also clears the sounds every firmware kept.</p>
+      <div class="row">
+        <label class="btn" for="merged-file">Choose image…</label><input type="file" id="merged-file" accept=".bin">
+        <button class="btn danger" id="merged-go" disabled>Write the whole image</button>
+      </div>
+      <div class="small" id="merged-status" style="margin-top:8px"></div>
+    </details>
+
+    <details class="card">
+      <summary>Log</summary>
+      <pre class="log" id="esp-log"></pre>
+    </details>
+  </section>
+
+  <!-- ===== Synths ===== -->
+  <section role="tabpanel" id="tab-synths" aria-labelledby="t-synths" hidden>
+    <h2>Synths</h2>
+    <p class="lead">Every firmware a slot can hold. Ported ones are built in this repository behind <span class="mono">synth/fm1_synth.h</span>; candidates are FM-1 firmwares and engines whose sound could become a slot (<a href="https://github.com/andrerezemini/fm1-cartridge/blob/main/docs/PORTING.md" target="_blank" rel="noopener">how to port one</a>).</p>
+    <div class="grid" id="synth-grid"></div>
+    <h3 style="margin-top:8px">Candidates</h3>
+    <div class="card scroll" style="padding:4px 8px">
+      <table id="cand-table"><thead><tr><th>Firmware</th><th>Licence</th><th class="hide-sm">What it adds</th><th>Effort</th></tr></thead><tbody></tbody></table>
+    </div>
+    <div class="card">
+      <h3>Add a firmware to the catalogue</h3>
+      <p class="small muted" style="margin:0 0 10px">A GitHub repository (owner/name). The check reads its licence, latest release and whether it has a host build of its DSP (<span class="mono">tests/hostsim.c</span>), the route the Felucca and Melodee ports took.</p>
+      <div class="row">
+        <input type="text" id="add-repo" placeholder="charlesvestal/fm1-x0x" size="28" aria-label="GitHub repository">
+        <button class="btn" id="add-check">Check</button>
+      </div>
+      <div id="add-result" style="margin-top:12px"></div>
+    </div>
+  </section>
+
+  <!-- ===== Updates ===== -->
+  <section role="tabpanel" id="tab-updates" aria-labelledby="t-updates" hidden>
+    <h2>Updates</h2>
+    <p class="lead">What the pinned upstreams have released since this repository took them, and which slots of the connected cartridge run an older build than the one on this computer.</p>
+    <div class="card">
+      <div class="row"><h3 style="margin:0">Upstreams</h3><button class="btn" id="up-check">Check now</button><span class="small muted" id="up-status"></span></div>
+      <div class="scroll" style="margin-top:10px">
+        <table id="up-table"><thead><tr><th>Component</th><th>Pinned</th><th>Latest</th><th>Status</th></tr></thead><tbody></tbody></table>
+      </div>
+    </div>
+    <div class="card">
+      <h3>Cartridge slots against the local builds</h3>
+      <div id="slot-updates" class="small"><span class="empty">Connect the cartridge on the Slots tab.</span></div>
+    </div>
+  </section>
+
+  <!-- ===== FM-1 ===== -->
+  <section role="tabpanel" id="tab-fm1" aria-labelledby="t-fm1" hidden>
+    <h2>FM-1: Sloop with the cartridge profile</h2>
+    <p class="lead">The FM-1 needs the Sloop build of this repository (<span class="mono">sloop-fm1/build/felucca.fwsc</span>) to play the cartridge. It installs through Sloop's own updater over USB-MIDI, the same as Sloop's installer page.</p>
+    <div class="callout" id="no-midi" hidden>This browser has no Web MIDI with SysEx: use Chrome or Edge, or <span class="mono">sloop-fm1/tools/fm1_install.py</span>.</div>
+    <div class="card">
+      <h3>1. Package</h3>
+      <div class="row">
+        <button class="btn" id="pkg-local" disabled>Use the local build</button>
+        <label class="btn" for="pkg-file">Choose .fwsc…</label><input type="file" id="pkg-file" accept=".fwsc">
+      </div>
+      <dl class="kv" id="pkg-info" style="margin-top:10px" hidden></dl>
+    </div>
+    <div class="card">
+      <h3>2. Back up the FM-1</h3>
+      <p class="small muted" style="margin:0 0 8px">Projects, settings and user presets, through the Sloop editor protocol, with the cartridge unplugged:</p>
+      <pre class="log">python3 tools/fm1_backup.py backup-before.json</pre>
+      <label class="small" style="display:block;margin-top:8px"><input type="checkbox" id="fm1-backed"> The FM-1 is backed up</label>
+    </div>
+    <div class="card">
+      <h3>3. Install</h3>
+      <div class="row">
+        <button class="btn" id="fm1-find">Find the FM-1</button>
+        <button class="btn primary" id="fm1-go" disabled>Install</button>
+      </div>
+      <progress id="fm1-bar" value="0" max="100" hidden style="margin-top:10px"></progress>
+      <div class="small" id="fm1-status" style="margin-top:6px"></div>
+      <details style="margin-top:8px"><summary>Log</summary><pre class="log" id="fm1-log"></pre></details>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">Writing firmware can leave a device that does not start until it is flashed again: keep the backups, never connect the cartridge to the FM-1 and a computer at once, and see <a href="https://github.com/andrerezemini/fm1-cartridge/blob/main/docs/FLASHING.md" target="_blank" rel="noopener">FLASHING.md</a>. GPL-3.0-only; esptool-js is Apache-2.0.</div>
+</footer>
+<script type="module" src="manager.js"></script>
+</body>
+</html>

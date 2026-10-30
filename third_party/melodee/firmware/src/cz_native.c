@@ -7,6 +7,7 @@
  * Chip envelope rate, phase functions and logarithmic DCA law follow the
  * independently documented uPD933 model by Devin Acker (MAME, BSD-3-Clause).
  * See docs/CZ1_SYSEX.md for sources and remaining calibration limits. */
+#include "performance_options.h"
 #include "x0x/fastmath.h"
 
 static const uint16_t CZ_AMP[128] = {
@@ -64,7 +65,7 @@ static float cz_native_env_tick(cz_native_env_t *e,const cz_native_def_t *d,uint
 static void cz_native_block(track_t *t)
 {
     cz_part_t *c=cz_part((uint32_t)(t-trk)%NTRK);
-    const uint8_t *b=cz_patch[(uint32_t)(t-trk)%NTRK].raw;
+    const uint8_t *b=cz_patch_of((uint32_t)(t-trk)%NTRK)->raw;
     if(c->native_valid && !memcmp(c->native_raw,b,128u))return;
     memcpy(c->native_raw,b,128u);c->native_valid=1;
     for(uint32_t l=0;l<2u;l++)for(uint32_t e=0;e<3u;e++){
@@ -108,7 +109,7 @@ static __attribute__((noinline)) float cz_native_wave(const cz_hw_pd_t *b,uint32
     case 6:phase=pos*(1.0f+b->dcw*(1.0f/64.0f));break;
     default:phase=half<pivot?half*b->k0:2048.0f;break;
     }
-    phase-=(float)(uint32_t)(phase*(1.0f/2048.0f))*2048.0f;
+    if(phase>=2048.0f)phase-=(float)(uint32_t)(phase*(1.0f/2048.0f))*2048.0f;
     switch(b->window){
     case 0:break;
     case 1:window=pos;break;
@@ -124,9 +125,6 @@ static __attribute__((noinline)) float cz_native_wave(const cz_hw_pd_t *b,uint32
     float carrier=1.0f-(FM6_SIN[i]+(FM6_SIN[i+1u]-FM6_SIN[i])*f);
     return carrier*(1.0f-window*(1.0f/2048.0f))-1.0f;
 }
-#ifndef MELODEE_CZ_FAST
-#define MELODEE_CZ_FAST 1
-#endif
 #if MELODEE_CZ_FAST
 /* Window 4's upper half is exactly -1 for every sounding waveform. Wave 3
  * retains its earlier exact zero return. Phase/noise/DC/envelopes still run
@@ -135,6 +133,8 @@ static __attribute__((noinline)) float cz_native_wave(const cz_hw_pd_t *b,uint32
 static __attribute__((noinline)) float cz_native_wave_window4(const cz_hw_pd_t *b,uint32_t ph,uint32_t toggle)
 {
     float pos=(float)ph*(2048.0f/4294967296.0f),half=pos>=1024.0f?pos-1024.0f:pos;
+    if(b->wave[toggle&1u]==3u)return 0.0f;
+    if(pos>=1024.0f)return -1.0f;
     float pivot=b->pivot,phase=0.0f,window=0.0f;
     switch(b->wave[toggle&1u]){
     case 0:phase=pos<pivot?pos*b->k0:1024.0f+(pos-pivot)*b->k1;break;
@@ -146,8 +146,7 @@ static __attribute__((noinline)) float cz_native_wave_window4(const cz_hw_pd_t *
     case 6:phase=pos*(1.0f+b->dcw*(1.0f/64.0f));break;
     default:phase=half<pivot?half*b->k0:2048.0f;break;
     }
-    if(pos>=1024.0f)return -1.0f;
-    phase-=(float)(uint32_t)(phase*(1.0f/2048.0f))*2048.0f;
+    if(phase>=2048.0f)phase-=(float)(uint32_t)(phase*(1.0f/2048.0f))*2048.0f;
     window=pos*2.0f;
     /* The normalized sine table is shared with FM6. Interpolate its cosine
      * quadrant in float: no chip-phase or PCM truncation before the mixer. */
@@ -182,7 +181,7 @@ static __attribute__((noinline)) uint32_t cz_native_inc(float note,int32_t fine)
 static __attribute__((noinline)) void cz_native_render(track_t *t,voice_t *v,int32_t *out,uint32_t n,const vmod_t *m)
 {
     if(!n)return;
-    const uint8_t *b=cz_patch[(uint32_t)(t-trk)%NTRK].raw;
+    const uint8_t *b=cz_patch_of((uint32_t)(t-trk)%NTRK)->raw;
     cz_voice_t *c=cz_voice(t,v);const cz_native_def_t (*defs)[3]=cz_part((uint32_t)(t-trk)%NTRK)->native_def;cz_hw_pd_t pd[2];
     uint32_t inc[2],ph[2]={v->ph[0],v->ph[1]},tg[2]={(uint32_t)v->s[0],(uint32_t)v->s[1]};
     float amp[2][2],step[2];
@@ -200,7 +199,13 @@ static __attribute__((noinline)) void cz_native_render(track_t *t,voice_t *v,int
         float depth=cz_native_env_tick(&c->native_eg[l][1],&defs[src][1],v->gate);
         uint32_t kfn=v->note>36u?v->note-36u:0u;
         float rate_scale=1.0f+(float)((b[16u+off]&15u)*kfn)*(1.0f/96.0f);
-        cz_native_env_scaled(&c->native_eg[l][2],&defs[src][2],v->gate,rate_scale);
+        uint32_t release = midi_verb[t-trk];
+        if (release && !v->gate) {
+            cz_native_env_t *eg = &c->native_eg[l][2];
+            eg->gate = 0; eg->stage = defs[src][2].end;
+            eg->level = fm_maxf(0.0f, eg->level - (127.0f * CTL * 10000.0f / FS) / (float)TIME_MS_X10[release]);
+            if (eg->level == 0.0f) eg->stage++;
+        } else cz_native_env_scaled(&c->native_eg[l][2],&defs[src][2],v->gate,rate_scale);
         /* Unheard envelopes keep advancing. Their stateless waveform,
          * amplitude and frequency preparation cannot affect next-note state. */
         if(!heard)continue;
@@ -228,6 +233,33 @@ static __attribute__((noinline)) void cz_native_render(track_t *t,voice_t *v,int
     }
     v->s[4]=(int32_t)(c->native_eg[first][2].level*256.0f);
     uint32_t modulation=(b[15]>>3)&7u;
+#if MELODEE_CZ_FAST
+    /* Each line has independent phase, DC and amplitude state. Render it
+     * contiguously so the sample loop retains those values in registers. */
+    float lines[2][CTL];
+    for(uint32_t l=first;l<=last;l++){
+        uint32_t phase=ph[l],toggle=tg[l],delta=inc[l];
+        float dc=c->native_dc[l],a0=amp[l][0],da=step[l];
+        for(uint32_t i=0;i<n;i++){
+            uint32_t old=phase,advance=delta;
+            if(l && modulation==3u){
+                c->noise^=c->noise<<13;c->noise^=c->noise>>17;c->noise^=c->noise<<5;
+                if(c->noise&1u)advance=(uint32_t)fm_minf((float)advance*(1625.0f/256.0f),2147483520.0f);
+            }
+            float raw=wave_run[l](&pd[l],phase,toggle);
+            phase+=advance;if(phase<old)toggle^=1u;
+            dc+=(raw-dc)*(1.0f/1024.0f);
+            raw=(raw-dc)*0.5f;
+            lines[l][i]=raw*(a0+da*(float)i);
+        }
+        ph[l]=phase;tg[l]=toggle;c->native_dc[l]=dc;
+    }
+    for(uint32_t i=0;i<n;i++){
+        float sample=first==last?lines[first][i]:modulation==4u?lines[0][i]*lines[1][i]*2.0f:(lines[0][i]+lines[1][i])*0.5f;
+        float gain=((float)m->amp0+(float)(m->amp1-m->amp0)*(float)i*(1.0f/CTL))*(1.0f/32768.0f);
+        out[i]+=(int32_t)(sample*gain*(4.0f*VOICE_FS));
+    }
+#else
     for(uint32_t i=0;i<n;i++){
         float line[2]={0.0f,0.0f};
         for(uint32_t l=first;l<=last;l++){
@@ -251,5 +283,6 @@ static __attribute__((noinline)) void cz_native_render(track_t *t,voice_t *v,int
         float gain=((float)m->amp0+(float)(m->amp1-m->amp0)*(float)i*(1.0f/CTL))*(1.0f/32768.0f);
         out[i]+=(int32_t)(sample*gain*(4.0f*VOICE_FS));
     }
+#endif
     v->ph[0]=ph[0];v->ph[1]=ph[1];v->s[0]=(int32_t)tg[0];v->s[1]=(int32_t)tg[1];
 }

@@ -1,7 +1,7 @@
 # Synthesizer ports: Clipper, Felucca and Melodee
 
-The cartridge runs one of three synthesizers written for the FM-1: **Clipper**, **Felucca 1.6.1**
-and **Melodee 1.4.5**. The originals are firmware for the FM-1's AC7911; their binaries do not run
+The cartridge runs one of three synthesizers written for the FM-1: **Clipper 1.3**, **Felucca 1.7.0**
+and **Melodee 1.5.1**. The originals are firmware for the FM-1's AC7911; their binaries do not run
 on the ESP32-S3. Each port compiles the upstream DSP source itself (engines, voices, parameters,
 effects and the sequencer's MIDI handling) behind one common interface, `synth/fm1_synth.h`. None
 of them is an emulation of the original sound.
@@ -16,15 +16,15 @@ the vendored file subsets, the one changed upstream file of each port and the li
 
 | | Clipper | Felucca | Melodee |
 | --- | --- | --- | --- |
-| Upstream | [isod89/clipper-fm1](https://github.com/isod89/clipper-fm1/tree/e69067211c4690f34e494b5b896e4585163dcc2b) | [hugelton/Felucca](https://github.com/hugelton/Felucca/tree/63f88ec18b71c6ed4371d03d6f04dd93f4193ad3) 1.6.1, with [hugelton/Felucca-Engines](https://github.com/hugelton/Felucca-Engines/tree/c46e0086f69bdc26df1cd144dca9e683cc4531dd) | [keremimo/melodee](https://github.com/keremimo/melodee/tree/398ada1e09d864c12f3b778a43e45c7c2a8031b8) 1.4.5 |
-| Pinned revision | `e69067211c4690f34e494b5b896e4585163dcc2b` | `63f88ec18b71c6ed4371d03d6f04dd93f4193ad3`; engines `c46e0086f69bdc26df1cd144dca9e683cc4531dd` | `398ada1e09d864c12f3b778a43e45c7c2a8031b8` |
+| Upstream | [isod89/clipper-fm1](https://github.com/isod89/clipper-fm1/tree/fbd8434e7b501ec5d772f5c5f656c25735929369) 1.3 | [hugelton/Felucca](https://github.com/hugelton/Felucca/tree/d7b1b7c4099bba28854869ddb256b3d9f634cee8) 1.7.0, with [hugelton/Felucca-Engines](https://github.com/hugelton/Felucca-Engines/tree/04ffe903eb87a752305d1e5b10da01b53e4ab004) and [hugelton/felucca-bsp](https://github.com/hugelton/felucca-bsp/tree/5942e68b89ab9ccd23f2c541d712ca38fe635f11) | [keremimo/melodee](https://github.com/keremimo/melodee/tree/6a608ba122ac42293908d394e26713e31ec52fb0) 1.5.1 |
+| Pinned revision | `fbd8434e7b501ec5d772f5c5f656c25735929369` (tag `v1.3`) | `d7b1b7c4099bba28854869ddb256b3d9f634cee8`; engines `04ffe903eb87a752305d1e5b10da01b53e4ab004`; BSP `5942e68b89ab9ccd23f2c541d712ca38fe635f11` | `6a608ba122ac42293908d394e26713e31ec52fb0` (tag `v1.5.1`) |
 | Adapter | `synth/clipper_synth.c` | `synth/felucca_synth.c` | `synth/melodee_synth.c` |
 | Vendored subset | [third_party/clipper](../third_party/clipper/README.md) | [third_party/felucca](../third_party/felucca/README.md) | [third_party/melodee](../third_party/melodee/README.md) |
 | Engines offered | 23 | 13: ANALOG, FM6, PHASE, LOFI, SAMPLE, VOICE, TRIO, WHEEL, GRAIN, PHYS, NOISE, SLICE, DRUM | 5: PROPHET, FM6, CZ-1, SID, DRUM |
 | Factory presets | 407 | 72 | 327, of which 201 in PROPHET |
 | Voices | 8, shared (upstream `NVOICE`) | 8 per part (upstream `NVOICE`) | 16 voice slots per part: PROPHET 5 (the upstream single-core value), FM6 up to 16 (as Dexed), SID 4, the other engines 8 |
-| Parts rendered | One (track 1) | One of the four (part 1) | One of the four (`song.ntrk = 1`) |
-| Compile switches | `CLIPPER_SYNTH=1`, `FELUCCA_SLICE=0`, `FELUCCA_ARRANGER=0` | `FELUCCA_CPU2=0`, `FELUCCA_FM4=0`, `FELUCCA_SLICE=1` | `MELODEE_DUAL_CORE=0`; USB audio, CDC, flash, OTA and audio profile at 0 |
+| Parts rendered | One (track 1) | One of the four (part 1) | One of the four (`song.ntrk = 1`); no MIDI-only tracks (`NMIDI = 0`) |
+| Compile switches | `CLIPPER_SYNTH=1`, `FELUCCA_SLICE=0`, `FELUCCA_ARRANGER=0` | `FELUCCA_CPU2=0`, `FELUCCA_FM4=0`, `FELUCCA_SLICE=1` | `MELODEE_DUAL_CORE=0`, `MELODEE_RAM_AUDIO=0`, `NMIDI=0`; USB audio, USB host, CDC, flash, OTA and audio profile at 0 |
 | Compiler flags | `-fwrapv` | `-fwrapv` | `-fwrapv -ffp-contract=off` (floating-point FM6, as in the upstream tests) |
 | Name on the FM-1 | CLIPPER OK | FELUCCA OK | MELODEE OK |
 
@@ -49,8 +49,8 @@ Clipper adapter also exports the same calls as named functions (`clipper_synth_i
 | `panic()` | Ends voices, queued events, held notes and effect tails; keeps the selected sound |
 | `release()` | Every sounding note lets go at the next block, as a note-off would (upstream's per-track release request, `panic_req`, with the arpeggiator, KBD HOLD and the MIDI note owners); a note-on still in the queue is dropped with them (upstream lets go before it drains the queue, so it would start after the release); tails, the rest of the queue and the sound kept. The cartridge server calls it on a MIDI CH change |
 | `set_preset(engine, preset)` | Selects an engine and a factory preset; `-1` for an invalid index. What sounds fades out over upstream's engine-switch fade (2.9 ms; 5.8 ms in Clipper, with its own sound fade), on its own values: Felucca and Melodee put the old sound's common values back for the fade's blocks (upstream keeps only the engine's) and load the new FM6, PROPHET and CZ-1 patch after it. The engine follows, the effect tails and the MIDI already queued are kept. In Melodee a DRUM kit of another layout (909, SID, the others) cuts the hits instead, since the kit sizes the engine's state |
-| `engine_count/name`, `preset_count/name`, `current_engine/preset` | The catalogue. Clipper indexes engines by their upstream IDs. Felucca and Melodee use the upstream display order (`ENGINE_ORDER`), so retired engines (DIGITAL in Felucca; ANALOG, DIGITAL and the legacy extras in Melodee) are not offered |
-| `param_count/get/set` | The remote catalogue that the CARTRIDGE page edits: group, name, value text, unit and range, taken from the upstream parameter descriptors. Entry 0 is always `MIDI CH`. `param_set` returns `-1` outside the range, and in Felucca for SAMPLE SET, GRAIN SRC and SLICE SRC values with no material (the user slots, which the port cannot fill); the range those report ends at their last source |
+| `engine_count/name`, `preset_count/name`, `current_engine/preset` | The catalogue. Clipper indexes engines by their upstream IDs. Felucca and Melodee use the upstream display order (`ENGINE_ORDER`), so retired engines (DIGITAL in Felucca; ANALOG, DIGITAL and the legacy extras in Melodee) are not offered, nor Melodee's MIDI Track, which has no audio |
+| `param_count/get/set` | The remote catalogue that the CARTRIDGE page edits: group, name, value text, unit and range, taken from the upstream parameter descriptors. Entry 0 is always `MIDI CH`. `param_set` returns `-1` outside the range, and in Felucca for SAMPLE SET, GRAIN SRC and SLICE SRC values with no material (the user slots, which the port cannot fill); the range those report ends at their last source. Melodee refuses the enum values that have no name, which upstream's knob passes over (a retired effect, the other rack's types in the effect lists, the modulation matrix's unused destinations), and its ranges end at named values; choosing REVERB in a shared rack slot moves the rack's one REVERB there, and a note insert starts from upstream's starting controls |
 | `set_midi_channel`, `midi_channel` | 0 answers every channel (OMNI), 1..16 one channel; realtime messages are never filtered |
 | `name`, `revision` | `CLIPPER`, `FELUCCA` or `MELODEE`, and the upstream commit of the port |
 
@@ -88,12 +88,15 @@ are never compiled individually.
 - **Clipper:** `libc.c`, `core.h`, `cpu1.h` (its second-core calls replaced by serial execution in
   the calling task), `engines.c`, `drums.c`, `params.c`, `voice.c`, `slicer.c`, `fx.c` and
   `seq.c`, over the tables in `third_party/clipper/generated`.
-- **Felucca:** `libc.c`, `core.h`, `engines.c` (including the five Felucca-Engines engines),
-  `params.c`, `mod.c`, `voice.c`, `slicer.c`, `fx.c`, `song_chain.c` and `seq.c`, over the tables
-  in `third_party/felucca/generated`.
+- **Felucca:** felucca-bsp's `chip/libc.c`, `core.h`, `engines.c` (including the six Felucca-Engines
+  engines, PHASE among them), `params.c`, `mod.c`, `voice.c`, `slicer.c`, `fx.c`, `song_chain.c` and
+  `seq.c`, over the tables in `third_party/felucca/generated`. Its clock is the FM-1's MIDI clock
+  (`USB`): the sequencer and the arpeggiator count it in upstream's fixed musical units, so they keep
+  its phase across long runs and tempo changes.
 - **Melodee:** `libc.c`, `core.h`, `engines.c`, `params.c`, `mod.c`, `voice.c`, `mix.c`,
   `song_chain.c` and `seq.c`, over the tables in `third_party/melodee/generated`. The audio arena
-  of `resources.c` is sized for one part (64 KB + 8 KB).
+  of `resources.c` is sized for one part (64 KB + 8 KB); the heaviest engine with three shared
+  effects, the SLOOP reverb's 19 KB among them, peaks at about 31 KB of it on the host.
 
 The upstream linker sections describe the AC7911 memory map. The adapters drop them and keep the
 alignment and `noinline` attributes; on the ESP32 a linker fragment per port places the memory
@@ -114,12 +117,16 @@ Common to the three ports:
 Per port:
 
 - **Clipper:** user banks (the `fm1_xip.h` stub returns an invalid header); CC 20 (MORPH); photos,
-  icons, fonts, the Hügelton Sample Pack and the CC0 samples of the groovebox mode.
+  icons, fonts, the Hügelton Sample Pack and the CC0 samples of the groovebox mode; the drum
+  machine inherited from SLOOP, which upstream's FM-1 build leaves out as well.
   `CLIPPER_SYNTH=0` is not supported by the subset.
-- **Felucca:** the user sample slots (USR1..3 of SAMPLE, the SLICE sources); DIGITAL, whose sounds
-  play as FM6, as upstream.
+- **Felucca:** the user sample slots (USR1..3 of SAMPLE, the SLICE sources; the stub is felucca-bsp's
+  `chip/fm1_xip.h`); DIGITAL, whose sounds play as FM6, as upstream; the rest of felucca-bsp's hardware
+  layer.
 - **Melodee:** the USB interrupt timeline (each event plays in the block in which it arrives);
-  the dual-core Prophet with 8 voices; the retired engines.
+  the dual-core Prophet with 8 voices; the retired engines; MIDI Track and the MIDI-only tracks 5
+  to 8, which only send MIDI out; the master punch FX, played from the panel's keys (compiled, it
+  stays idle); the MIDI controller knob profiles (compiled, off as upstream's default).
 
 The CARTRIDGE page takes the place of the upstream editing: its own SysEx protocol selects engines
 and presets and edits parameters in the ESP32's RAM, and the firmware keeps that state in NVS
@@ -163,9 +170,9 @@ large and read sequentially, or not touched per sample, go to PSRAM: random per-
 | ESP-IDF 5.3.6 build | Clipper | Felucca | Melodee |
 | --- | --- | --- | --- |
 | In PSRAM | The large delay and wavetable buffers (`firmware/main/clipper.lf`) | The large delay and loop buffers (`firmware/main/felucca.lf`) | The sequencer's pattern pool and recording lists (`firmware/main/melodee.lf`) |
-| In internal RAM | Voice, engine, track and effect state | Voice, engine (`eng_mem`), track and effect state | The audio arena (engine voice state and FX slots), tracks and mixer |
-| Image, `-4m2m` profile | 771,904 B (41% of a 1.25 MB slot free) | 603,424 B (54% free) | 571,168 B (56% free) |
-| Internal RAM (DIRAM) used | 152 KB of 341 KB | 183 KB of 341 KB | 235 KB of 341 KB |
+| In internal RAM | Voice, engine, track and effect state | Voice, engine (`eng_mem`), track and effect state | The audio arena (engine voice state and the shared effect rack), voices, tracks and mixer |
+| Image, `-4m2m` profile | 761,136 B (42% of a 1.25 MB slot free) | 604,688 B (54% free) | 596,528 B (54% free) |
+| Internal RAM (DIRAM) used | 150 KB of 341 KB | 183 KB of 341 KB | 228 KB of 341 KB |
 
 Observed on hardware: Clipper notes from the FM-1 keyboard play through the FM-1 with a clean
 sound; the MIDI channel filter keeps the FM-1's other tracks on their internal sound; the

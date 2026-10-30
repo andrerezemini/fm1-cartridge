@@ -1,7 +1,8 @@
 /* SPDX-License-Identifier: GPL-3.0-only
- * Portable adapter to the actual Felucca DSP (hugelton/Felucca 1.6.1), not an emulation of its
+ * Portable adapter to the actual Felucca DSP (hugelton/Felucca 1.7.0), not an emulation of its
  * sound. Upstream sources retain their copyright and license notices. The include order is the
- * one of tests/hostsim.c upstream: the DSP, without the USB device, the UI, storage or the HAL. */
+ * one of tests/hostsim.c upstream: the DSP and felucca-bsp's libc.c, without the USB device, the UI,
+ * storage or the rest of the hardware layer. */
 #include "felucca_synth.h"
 #include <string.h>
 
@@ -23,7 +24,7 @@
 #define memset felucca_upstream_memset
 #define memcpy felucca_upstream_memcpy
 #define memcmp felucca_upstream_memcmp
-#include "../third_party/felucca/firmware/src/libc.c"
+#include "../third_party/felucca/firmware/bsp/chip/libc.c"
 #undef memset
 #undef memcpy
 #undef memcmp
@@ -114,6 +115,7 @@ static void felucca_panic(void)
     memset(midi_owners, 0, sizeof midi_owners);
     memset(midi_bend_target, 0, sizeof midi_bend_target);
     memset(&midi_clock, 0, sizeof midi_clock);
+    midi_grid_reset();                     /* the external clock's fractional carries (seq.c) */
     transport_req = panic_req = 0;
     midi_in_overflow = 0;
     song.playing = song.rec = 0;
@@ -434,7 +436,7 @@ static int felucca_param_set(uint32_t index, int32_t value)
 }
 
 static const fm1_synth_api_t felucca_api = {
-    .name = "FELUCCA", .revision = "63f88ec18b71c6ed4371d03d6f04dd93f4193ad3",
+    .name = "FELUCCA", .revision = "d7b1b7c4099bba28854869ddb256b3d9f634cee8",
     .init = felucca_init, .midi = felucca_midi, .render = felucca_render, .panic = felucca_panic,
     .release = felucca_release,
     .set_preset = felucca_set_preset, .engine_count = felucca_engine_count,

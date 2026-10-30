@@ -96,7 +96,7 @@ drum track never is.
 
 - Each synthesizer exposes its engine controls and the common groups it has: envelopes, LFOs,
   modulation matrix, voice/glide/pan, arpeggiator and chords, scale, inserts and effects (Clipper
-  adds macros, ENV2, LFO2/3, EQ and compressor; Melodee its three FX slots and sends; Felucca its
+  adds macros, ENV2, LFO2/3, EQ and compressor; Melodee its note inserts (NOTE1–3) and the shared effect rack (FX1–3, CHAIN or SPLIT) fed by SEND, which starts at 0, so a rack effect is silent until SEND is raised; Felucca its
   slicer and drum lane levels). The names come from the DSP itself; Clipper exposes up to 128
   parameters per engine.
 - One instrument part per synthesizer, answering one MIDI channel (below). These are not four
@@ -229,7 +229,7 @@ handover back to the internal engine, the All Notes Off at takeover and after a 
 autosave guard, the clock, LEVEL and MUTE on the return, a PRESETS turn across engines, the 5 s
 liveness query and recovery after repeated outages, and a newer cartridge's longer reply. The server tests (`test_cartridge.c`, one executable per port) check 407
 preset selections and 2,963 parameter ranges across Clipper's 23 engines, 72 presets and 1,272
-ranges in Felucca, 327 presets and 526 ranges in Melodee, the FIRMWARE entry with simulated slots
+ranges in Felucca, 327 presets and 511 ranges in Melodee, the FIRMWARE entry with simulated slots
 (an empty slot is skipped, returning to the running one disarms, the busy guard, the cancel on
 PARAM and QUERY), the kept entry after a sound change, the MIDI CH change with a note held, the
 read-only figures, the state record restored after a fresh start, Felucca's empty sources passed

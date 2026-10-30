@@ -46,9 +46,12 @@ static uint32_t cpu1_ticks(void) { return 0; }
 #include "../third_party/clipper/firmware/src/fx.c"
 
 /* Match the queue consumed by upstream events_block(), without compiling its
- * USB device HAL. Clipper's outgoing MIDI is unused in this host cartridge. */
+ * USB device HAL. Clipper's outgoing MIDI is unused in this host cartridge.
+ * midi_in_lost is upstream usb.c's flag for a note message that did not fit;
+ * this queue never drops one without a panic (clipper_synth_midi), so it stays 0. */
 #define MQ 64u
 static uint32_t midi_in_q[MQ], mi_w, mi_r;
+static volatile uint8_t midi_in_lost;
 static void midi_out_event(uint32_t packet) { (void)packet; }
 #include "../third_party/clipper/firmware/src/seq.c"
 /* UI-only descriptor lookup is intentionally unavailable in this headless port. */
@@ -267,6 +270,10 @@ void clipper_synth_panic(void)
     }
     memset(stq, 0, sizeof stq);
     memset(kh_set, 0, sizeof kh_set);
+    memset(live_held, 0, sizeof live_held);          /* (the keys and MIDI notes a player holds: seq.c) */
+    memset(mi_trk_held, 0, sizeof mi_trk_held);
+    memset(gr_wait, 0, sizeof gr_wait);              /* (GRAIN: a held note waiting for its grains) */
+    midi_in_lost = 0;
     memset(mi_pen, 0, sizeof mi_pen);
     memset(ly_route, 0, sizeof ly_route);
     memset(ly_note, 0, sizeof ly_note);
@@ -454,7 +461,7 @@ const char *clipper_synth_engine_name(uint32_t engine)
 const char *clipper_synth_preset_name(uint32_t engine, uint32_t preset)
 { return engine < NENGINES && preset < ENGINES[engine]->npresets ? ENGINES[engine]->presets[preset].name : NULL; }
 const char *clipper_synth_upstream_revision(void)
-{ return "e69067211c4690f34e494b5b896e4585163dcc2b"; }
+{ return "fbd8434e7b501ec5d772f5c5f656c25735929369"; }
 
 /* Remote catalogue is owned here, beside the real descriptors. No engine or
  * preset table is duplicated in the FM-1's very small flash slot. */
@@ -535,14 +542,9 @@ int clipper_synth_param_get(uint32_t index, clipper_param_t *out)
     if (slot >= 0) { fmt_int(out->name + n, slot + 1); n = str_len(out->name); }
     out->name[n++] = ' '; out->name[n] = 0;
     str_cpy(out->name + n, d->label, sizeof out->name - n);
-    /* FMX's fixed-size slot-name table has no NULL sentinel, although its
-     * upstream descriptor uses F_INT (whose formatter scans for one). Treat
-     * that table as the direct enum it actually is, without editing vendor. */
-    param_desc_t display = *d;
-    if (display.names == N_FMX_PATCH || display.names == N_FMX_ALG) display.fmt = F_ENUM;
-    param_format(&display, out->value, out->text, &unit);
+    param_format(d, out->value, out->text, &unit);
     /* The device's tiny columns abbreviate enums. Our full-width row needn't. */
-    if (display.fmt == F_ENUM && d->names)
+    if (d->fmt == F_ENUM && d->names)
         str_cpy(out->text, d->names[out->value - d->min], sizeof out->text);
     str_cpy(out->unit, unit, sizeof out->unit);
     return 0;
@@ -558,7 +560,7 @@ int clipper_synth_param_set(uint32_t index, int32_t value)
 }
 
 static const fm1_synth_api_t clipper_api = {
-    .name = "CLIPPER", .revision = "e69067211c4690f34e494b5b896e4585163dcc2b",
+    .name = "CLIPPER", .revision = "fbd8434e7b501ec5d772f5c5f656c25735929369",
     .init = clipper_synth_init, .midi = clipper_synth_midi, .render = clipper_synth_render,
     .panic = clipper_synth_panic, .release = clipper_synth_release, .set_preset = clipper_synth_set_preset,
     .engine_count = clipper_synth_engine_count, .preset_count = clipper_synth_preset_count,

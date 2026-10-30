@@ -62,8 +62,8 @@ Details: [electrical risks](hardware/README.md#risks-of-electrical-damage) and
 ## What is included
 
 - **Three synthesizers**, each the real upstream DSP compiled as one translation unit behind a
-  common interface (`synth/fm1_synth.h`): Clipper (23 engines), Felucca 1.6.1 (13 engines) and
-  Melodee 1.4.5 (Prophet, FM6, CZ-1, SID, DRUM). Pinned upstream subsets, generated tables,
+  common interface (`synth/fm1_synth.h`): Clipper 1.3 (23 engines), Felucca 1.7.0 (13 engines) and
+  Melodee 1.5.1 (Prophet, FM6, CZ-1, SID, DRUM). Pinned upstream subsets, generated tables,
   licences and SHA-256 manifests in [third_party/](third_party/); scope and limits in
   [PORTS.md](docs/PORTS.md).
 - **ESP-IDF firmware** ([firmware/](firmware/README.md)): USB-MIDI host, UAC1 audio out, one
@@ -71,7 +71,7 @@ Details: [electrical risks](hardware/README.md#risks-of-electrical-damage) and
   cartridge server. UART console; the USB port is reserved for the FM-1.
 - **Firmware slots** ([FIRMWARE_SLOTS.md](docs/FIRMWARE_SLOTS.md)): the FM-1 picks the slot to
   boot from the FIRMWARE parameter; a slot that never talks to the FM-1 rolls back.
-- **Sloop for the FM-1** ([sloop-fm1/](sloop-fm1/)): Sloop 2.7.1 with USB audio playback into
+- **Sloop for the FM-1** ([sloop-fm1/](sloop-fm1/)): Sloop 2.8.4 with USB audio playback into
   the mixer (ring buffer and adaptive resampling), the **USB RETURN** gain, the CARTRIDGE page
   and a charger control; one reproducible patch against upstream in
   [integrations/sloop-fm1/](integrations/sloop-fm1/README.md).
@@ -81,6 +81,11 @@ Details: [electrical risks](hardware/README.md#risks-of-electrical-damage) and
 - **Cartridge track** ([CARTRIDGE.md](docs/CARTRIDGE.md#the-cartridge-track)): the Sloop track on
   the cartridge's MIDI channel plays the cartridge from its keys, sequencer, arpeggiator and takes,
   shows the cartridge's names and browses its presets with PRESETS.
+- **Cartridge manager** ([WEB_MANAGER.md](docs/WEB_MANAGER.md)): a browser page
+  (`python3 tools/cartridge_web.py --open`, Chrome or Edge) that reads the cartridge's slots, backs
+  up its flash, writes any build or image into any slot, installs Sloop on the FM-1, keeps the
+  catalogue of ported and candidate synthesizers and checks every pinned upstream for new
+  releases. Adding another synthesizer to a slot follows [PORTING.md](docs/PORTING.md).
 - **Simulator and tests**: a native simulator with the same DSP and MIDI parser (one executable
   per synthesizer) writing WAV and JSON, with packet loss, reconnection and clock mismatch; CTest
   suites with sanitizers; CI workflows.
@@ -141,7 +146,8 @@ instrumentation. See [VALIDATION.md](docs/VALIDATION.md).
 The ESP32 firmware builds with ESP-IDF 5.3.6 ([firmware/README.md](firmware/README.md)); the Sloop
 package builds with Docker and the JieLi toolchain
 ([integrations/sloop-fm1/](integrations/sloop-fm1/README.md)). Flashing both devices, with
-backups, is described in [FLASHING.md](docs/FLASHING.md).
+backups, is described in [FLASHING.md](docs/FLASHING.md); the cartridge manager does the same from
+the browser ([WEB_MANAGER.md](docs/WEB_MANAGER.md)).
 
 ## Bench order
 
@@ -203,12 +209,13 @@ Parts of the electrical design are still open, so no circuit here is a proven de
 | `firmware/` | ESP-IDF project: MIDI/tone/Clipper/Felucca/Melodee profiles, three-slot partition table, slot flashing script |
 | `synth/` | The `fm1_synth.h` interface, the three adapters and the cartridge server |
 | `third_party/` | Pinned upstream subsets of Clipper, Felucca and Melodee, generated tables, licences, SHA-256 manifests |
-| `sloop-fm1/` | FM-1 firmware: Sloop 2.7.1 with the cartridge profile |
+| `sloop-fm1/` | FM-1 firmware: Sloop 2.8.4 with the cartridge profile |
 | `integrations/sloop-fm1/` | The Sloop patch against upstream, its manifest and how to reproduce it |
 | `core/` | USB-MIDI parser, endpoint discovery, the cartridge wire format and a reference audio receiver |
+| `web/` | The cartridge manager (slots, synth catalogue, updates, Sloop install), served by `tools/cartridge_web.py` |
 | `sim/`, `tests/` | Offline simulation and tests |
 | `hardware/` | BOM, photos of the prototype, and electrical and mechanical notes |
-| `docs/` | User guide, architecture, protocols, ports, slots, flashing, bench tests, gates and validation |
+| `docs/` | User guide, architecture, protocols, ports, porting, slots, flashing, the manager, bench tests, gates and validation |
 
 Code under [GPL-3.0-only](LICENSE), preserving the notices and compatible licences of the upstream
 components (see each `third_party/*/README.md`). An independent project, not affiliated with

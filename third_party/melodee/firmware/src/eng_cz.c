@@ -20,9 +20,9 @@ static void cz_factory_loaded(track_t *t)
     if (t->eng_req != ENGI_CZ || t->p[P_E7] != CZ_NATIVE)
         return;
     if (t->p[P_E1] > 0 && k < CZ_FACTORY_N)
-        cz_factory(k, cz_patch[(uint32_t)(t - trk) % NTRK].raw);
+        cz_factory(k, cz_patch_of((uint32_t)(t - trk) % NTRK)->raw);
     else
-        cz_patch_init(cz_patch[(uint32_t)(t - trk) % NTRK].raw);
+        cz_patch_init(cz_patch_of((uint32_t)(t - trk) % NTRK)->raw);
 }
 static int (*cz_user_bank_read)(uint32_t,uint32_t,uint8_t *);
 static uint16_t cz_user_pick[NTRK];
@@ -35,14 +35,14 @@ static void cz_compare_drop(uint32_t tr){if(cz_compare_tr==tr%NTRK+1u)cz_compare
 static void cz_compare_take(uint32_t tr)
 {
     if(cz_compare_tr==tr%NTRK+1u)return;
-    cz_compare=cz_patch[tr%NTRK];cz_compare_tr=(uint8_t)(tr%NTRK+1u);
+    cz_compare=(*cz_patch_of(tr%NTRK));cz_compare_tr=(uint8_t)(tr%NTRK+1u);
 }
 static void cz_track_accept(track_t *t){uint32_t tr=(uint32_t)(t-trk)%NTRK;cz_user_pick[tr]=(uint16_t)(t->p[P_E0]*17+t->p[P_E1]);cz_compare_drop(tr);}
 static void cz_bank_poll(void);
 static int cz_native_done(track_t *t, voice_t *v)
 {
     cz_voice_t *c = cz_voice(t, v);
-    const uint8_t *b = cz_patch[(uint32_t)(t - trk) % NTRK].raw;
+    const uint8_t *b = cz_patch_of((uint32_t)(t - trk) % NTRK)->raw;
     uint32_t ls = b[0] & 3u;
     uint32_t a = ls == 1u ? 1u : 0u, z = ls >= 2u ? 1u : a;
     return c->native_eg[a][2].stage > (b[CZ_ENV_END[a][2]] & 7u) &&

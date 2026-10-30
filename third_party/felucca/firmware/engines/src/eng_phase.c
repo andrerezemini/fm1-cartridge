@@ -1,13 +1,16 @@
-/* SPDX-License-Identifier: GPL-3.0-only
+/* SPDX-License-Identifier: MIT
  * Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments */
-/* Phase distortion. Felucca's own design: a -cos table read through a bent phase whose
- * bend is DCW. WAVE2 alternates with WAVE every other cycle. A second
- * line (DTN) can be mixed or ring-modulated; SUB adds a sine an octave down.
- * Envelopes are Felucca's own (ADSR, ENV -> DCW).
- * FOLD (E7, 1.5.5, #104): a sine wavefolder on the voice, after the lines and before SUB and the amp. 0 is off (the
- * loop and the sound as before). Up from 0 a soft sine saturation, then folds: the gain rises to ~8x (four folds of a
- * full-scale wave). Alias-aware: the sine fold has no corners (a triangle fold's sharp edges are what alias most), and
- * above A4 the gain added past the saturation falls with the pitch (1/f), so the top notes fold less. */
+/* PHASE: phase distortion. Felucca's own design.
+ *
+ * Waveforms: a -cos table read through a bent phase whose bend is DCW (SAW, SQR, PLS, DSIN, SPLS), or a
+ * sine windowed by a saw, a triangle or a trapezoid whose pitch rises with DCW (RSAW, RTRI, RTRP). WAVE2
+ * alternates with WAVE every other cycle. A second line (DTN) can be mixed or ring-modulated; SUB adds
+ * a sine an octave down. ENV moves DCW with the voice's envelope.
+ * FOLD (E7): a sine wavefolder on the voice, after the lines and before SUB and the amp. 0 is off (the
+ * loop and the sound without it). Up from 0 a soft sine saturation, then folds: the gain rises to ~8x
+ * (four folds of a full-scale wave). Alias-aware: the sine fold has no corners (a triangle fold's sharp
+ * edges are what alias most), and above A4 the gain added past the saturation falls with the pitch
+ * (1/f), so the top notes fold less. */
 static const char *const N_PD_WAVE[] = {"SAW", "SQR", "PLS", "DSIN", "SPLS", "RSAW", "RTRI", "RTRP"};
 static const char *const N_PD_WAVE2[] = {"-", "SAW", "SQR", "PLS", "DSIN", "SPLS", "RSAW", "RTRI", "RTRP"};
 static const char *const N_PD_LINE[] = {"MIX", "RING"};
@@ -131,9 +134,10 @@ static void phase_note_on(track_t *t, voice_t *v)
 }
 
 /* FOLD's gain (Q8) for a block: 0.64x at FOLD 1 (sin(pi/2 x) then has a small-signal gain of 1: a soft saturation),
- * ~8x at 127; the part above 0.64x scaled by A4 / the note's pitch above A4 (PD_FOLD_REF: 440 Hz at 44.1 kHz) */
+ * ~8x at 127; the part above 0.64x scaled by A4 / the note's pitch above A4 (PD_FOLD_REF: 440 Hz, 42852281 at
+ * 44.1 kHz) */
 #define PD_FOLD_G0 163u
-#define PD_FOLD_REF 42852281u
+#define PD_FOLD_REF ((uint32_t)((440ull << 32) / FS))
 static inline uint32_t pd_fold_gain(uint32_t fold, uint32_t inc)
 {
     uint32_t ext = fold * ((2048u - PD_FOLD_G0) << 4) / 127u;          /* Q12, <= 30160 */
@@ -156,7 +160,8 @@ static inline __attribute__((always_inline)) void phase_loop(track_t *t, voice_t
                                                                  * compiler makes the loop slower with it) */
     uint32_t ph0 = v->ph[0], ph1 = v->ph[1], ph2 = v->ph[2];
     int32_t tg0 = v->s[0], tg1 = v->s[1];                    /* WAVE / WAVE2 toggles */
-    int32_t fx1 = fg ? v->s[4] : 0, fhp = fg ? v->s[5] : 0;  /* FOLD's DC blocker: the last fold, its output */    pd_t b1, b2;
+    int32_t fx1 = fg ? v->s[4] : 0, fhp = fg ? v->s[5] : 0;  /* FOLD's DC blocker: the last fold, its output */
+    pd_t b1, b2;
     depth = clamp(depth + (m->shape - (64 << 8)), 0, 127 << 8);
     dcw = (uint32_t)depth * 65535u / (127u << 8);
     dcw = (dcw * 56000u) >> 16;                              /* the classic range of the bend */
@@ -193,7 +198,7 @@ static inline __attribute__((always_inline)) void phase_loop(track_t *t, voice_t
         if (fg)     /* (the blocker's step of a full-scale swing, +-65534, and SUB's 25400 on it: s x amp would wrap
                      * 32 bits past 65538; FOLD 0 stays within 58167) */
             s = clamp(s, -65535, 65535);
-        out[i] += voice_amp(s, m, i) << 1;
+        out[i] += voice_amp(s, m, i) * 2;
     }
     v->ph[0] = ph0;
     v->ph[1] = ph1;
@@ -211,7 +216,7 @@ static __attribute__((noinline)) void phase_render_f(track_t *t, voice_t *v, int
     phase_loop(t, v, out, n, m, pd_fold_gain((uint32_t)t->p[P_E7], m->inc));
 }
 
-/* FOLD going on or off (a knob, LFO / MOD, automation): FOLD 0 has no DC blocker (the sound as before 1.5.5) and the
+/* FOLD going on or off (a knob, LFO / MOD, automation): FOLD 0 has no DC blocker (the sound without FOLD) and the
  * fold's output has none of the wave's DC, so the switch would step (up to half full scale on PLS / RING). That block
  * is rendered both ways and crossfaded, unfolded -> folded or back (going off: at the last FOLD's gain); going on, the
  * blocker starts afresh as on a note-on (its state from the last FOLD long gone). Once per switch: not the loop's cost */
@@ -279,12 +284,12 @@ static const engine_t ENG_PHASE = {
         {"DTN", F_INT, 0, 127, 0, 0, "ct"},
         {"LINE", F_ENUM, 0, 1, 0, N_PD_LINE, 0},
         {"SUB", F_PCT, 0, 127, 0, 0, 0},
-        {"FOLD", F_PCT, 0, 127, 0, 0, 0},       /* 1.5.5 (#104): 0 = off, the sound as before */
+        {"FOLD", F_PCT, 0, 127, 0, 0, 0},       /* 0 = off */
     },
     .presets = PHASE_PRESETS,
     .npresets = NELEM(PHASE_PRESETS),
     .note_on = phase_note_on,
     .render = phase_render,
-    .keep = 0x30,                /* FOLD's DC blocker (1.5.5): a retrigger does not restart it */
+    .keep = 0x30,                /* FOLD's DC blocker: a retrigger does not restart it */
     .knob = {P_E2, P_E3, P_E4, P_REL},
 };

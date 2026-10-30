@@ -1,29 +1,35 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments */
 /* SLOOP menu (HOME held), in sections as the pages are (2.4): SCREEN (COLOR, ZOOM, KNOB ACCEL (2.7)), LIGHTS (LIGHTS, KEYS, NOTES),
- * AUDIO (LOWCUT, USB AUDIO, USB SERIAL (FELUCCA_CDC builds only), USB RATE (2.7 beta)), SYSTEM (2ND CORE (dualcore), HARDWARE CALIBRATION, LEARN CLEAR (2.6), ABOUT).
+ * AUDIO (LOWCUT, USB AUDIO, USB SERIAL (FELUCCA_CDC builds only), USB RATE (2.7 beta)), SEQ (2.7.1: STEP ADVANCE, DRUM PREVIEW), SYSTEM (2ND CORE (dualcore), HARDWARE CALIBRATION, LEARN CLEAR (2.6), ABOUT).
  * SELECT goes to the section before / after (stopping at the ends), KNOB 1..4 set the section's settings in order (the knob's colour marks
  * its row), PRESETS moves the cursor; OCT+ steps the cursor's setting round or opens it (CALIBRATION, ABOUT),
  * OCT- closes (from ABOUT: back to the section). */
 /* ------------------------------------------------------------ menu --- */
 /* (2.7: USB SERIAL only in a build with the serial console, FELUCCA_CDC=1: the FM-1's build has none) */
 /* Capture-only settings are hidden in the playback-only cartridge profile.
- * Return gain is live RAM state, deliberately outside the persisted settings layout. */
+ * Return gain is live RAM state, deliberately outside the persisted settings layout.
+ * With playback (FELUCCA_UAC_RX) a USB section comes before SYSTEM: USB RETURN, CHARGE (cartridge profile) and
+ * USB SERIAL (CDC builds), so that AUDIO keeps four rows at most; six tabs fit 240 pixels with SYSTEM as SYS. */
 #define MI_CAPTURE (!FELUCCA_UAC_RX || FELUCCA_UAC)
 enum { MI_COLOR, MI_ZOOM, MI_ACCEL, MI_LIGHTS, MI_KEYS, MI_NOTES, MI_LOWCUT,
 #if MI_CAPTURE
        MI_USB,
 #endif
-#if FELUCCA_CDC
+#if FELUCCA_CDC && !FELUCCA_UAC_RX
        MI_SERIAL,
 #endif
 #if MI_CAPTURE
        MI_RATE,
 #endif
+       MI_FRESO, MI_ADV, MI_DPREV,
 #if FELUCCA_UAC_RX
        MI_RETURN,
 #if FELUCCA_CARTRIDGE
        MI_CHARGE,
+#endif
+#if FELUCCA_CDC
+       MI_SERIAL,
 #endif
 #endif
        MI_CPU1, MI_PANEL, MI_LCLEAR, MI_ABOUT, MI_COUNT };
@@ -31,30 +37,35 @@ static const char *const MI_NAME[MI_COUNT] = {"COLOR", "ZOOM", "KNOB ACCEL", "LI
 #if MI_CAPTURE
                                               "USB AUDIO",
 #endif
-#if FELUCCA_CDC
+#if FELUCCA_CDC && !FELUCCA_UAC_RX
                                               "USB SERIAL",
 #endif
 #if MI_CAPTURE
                                               "USB RATE",
 #endif
+                                              "FILTER RESO", "STEP ADVANCE", "DRUM PREVIEW",
 #if FELUCCA_UAC_RX
                                               "USB RETURN",
 #if FELUCCA_CARTRIDGE
                                               "CHARGE",
 #endif
+#if FELUCCA_CDC
+                                              "USB SERIAL",
+#endif
 #endif
                                               "2ND CORE", "HARDWARE CALIBRATION", "MIDI LEARN CLEAR", "ABOUT"};
-enum { MS_SCREEN, MS_LIGHTS, MS_AUDIO,
+enum { MS_SCREEN, MS_LIGHTS, MS_AUDIO, MS_SEQ,   /* (2.7.1: SEQ) */
 #if FELUCCA_UAC_RX
        MS_RETURN,
 #endif
        MS_SYSTEM, MS_COUNT };
-static const char *const MS_NAME[MS_COUNT] = {"SCREEN", "LIGHTS", "AUDIO",
+static const char *const MS_NAME[MS_COUNT] = {"SCREEN", "LIGHTS", "AUDIO", "SEQ",   /* (AUDIO: and USB) */
 #if FELUCCA_UAC_RX
-                                            "USB",
-#endif
+                                            "USB", "SYS"};
+#else
                                             "SYSTEM"};
-static const uint8_t MS_FIRST[MS_COUNT + 1] = {MI_COLOR, MI_LIGHTS, MI_LOWCUT,
+#endif
+static const uint8_t MS_FIRST[MS_COUNT + 1] = {MI_COLOR, MI_LIGHTS, MI_LOWCUT, MI_ADV,   /* rows of each */
 #if FELUCCA_UAC_RX
                                              MI_RETURN,
 #endif
@@ -72,7 +83,7 @@ static const char *const LIGHTS_NAME[LIGHTS_N] = {"OFF", "LOW", "MID", "HIGH"}; 
 static const char *const KEYS_NAME[KEYS_N] = {"OFF", "C KEYS", "WHITE KEYS", "ALL KEYS"};      /* keys lit too, at the LIGHTS level */
 #define MI_Y0 26                                   /* the first row, under the section tabs */
 #define MI_DY 50                                   /* a row: the label, the value in large type */
-#define MI_TAB_GAP (FELUCCA_UAC_RX ? 4 : 10)          /* five sections must still fit 240 pixels */
+#define MI_TAB_GAP (FELUCCA_UAC_RX ? 4 : 6)           /* six sections (USB, SYS) end at 232, five at 236 */
 
 UI_SMALL static uint32_t mi_sec(uint32_t i)                 /* the section of item i */
 {
@@ -100,6 +111,8 @@ UI_SMALL static const char *mi_value(uint32_t i, uint16_t *c)
         return PALETTES[settings.palette % NPALETTES].name;
     case MI_ZOOM: return settings.zoom ? "ON" : "OFF";
     case MI_ACCEL: return knob_accel_off ? "OFF" : "ON";   /* (2.7) the knobs speed up with a fast turn */
+    case MI_ADV: return step_adv_off ? "OFF" : "ON";      /* (2.7.1) the STEP page's cursor moves on when the keys are let go */
+    case MI_DPREV: return drum_preview ? "ON" : "OFF";     /* (2.7.1) a drum sound picked with a knob is heard */
     case MI_LIGHTS: return LIGHTS_NAME[lights_lvl % LIGHTS_N];
     case MI_KEYS:
         *c = lights_lvl ? C_HI : C_DIM;               /* (needs LIGHTS) */
@@ -118,6 +131,15 @@ UI_SMALL static const char *mi_value(uint32_t i, uint16_t *c)
         return R[usb_rate % 3u];
     }
 #endif
+    case MI_FRESO: {                                  /* (2.7.2) the track filter's resonance, 0 (clean) .. 10 (fx.c) */
+        static char b[4];
+        if (!flt_reso) {
+            *c = C_DIM;
+            return "OFF";
+        }
+        fmt_int(b, flt_reso > 10u ? 10 : flt_reso);
+        return b;
+    }
 #if FELUCCA_UAC_RX
     case MI_RETURN: {
         static char b[8];
@@ -157,7 +179,7 @@ UI_SMALL static void draw_menu(void)
     uint32_t sig = ui.menu * 7u + ui.menu_sel * 131u + settings.palette * 1009u + settings.lowcut * 7919u +
                    settings.zoom * 104729u + lights_lvl * 1299709u + lights_keys * 15485863u + ml_count() * 2654435u +
                    lights_notes * 32452843u + usb_full * 49979687u + usb_serial * 86028121u + usb_rate * 15486719u + theme_shown() * 32452867u + theme.crc + cpu1_off * 122949829u +
-                   knob_accel_off * 179424673u;
+                   knob_accel_off * 179424673u + drum_preview * 236887691u + step_adv_off * 373587883u + flt_reso * 512927357u;
 #if FELUCCA_UAC_RX
     sig += uac_rx_gain * 67867967u;
 #if FELUCCA_CARTRIDGE
@@ -219,7 +241,7 @@ UI_SMALL static void draw_menu(void)
                 if (i == sec)
                     cv_rect(x - 2, 3, w + 4, 18, C_LINE);
                 cv_text(x, 4, &FONT_S, MS_NAME[i], i == sec ? C_WHITE : C_DIM);
-                x += w + MI_TAB_GAP;
+                x += w + MI_TAB_GAP;                /* (2.7.1: five sections: 6, the last ends at 236) */
             }
             for (i = MS_FIRST[sec]; i < MS_FIRST[sec + 1u]; i++) {
                 uint32_t r = i - MS_FIRST[sec];
@@ -306,6 +328,12 @@ UI_SMALL static void mi_set(uint32_t i, int32_t s)
     case MI_ACCEL:                                     /* (2.7) right ON, left OFF; OCT+ toggles (ui_input.c accel) */
         knob_accel_off = (uint8_t)(s > 0 ? 0u : s < 0 ? 1u : !knob_accel_off);
         break;
+    case MI_ADV:                                       /* (2.7.1) right ON, left OFF; OCT+ toggles (ui_input.c seq_entry) */
+        step_adv_off = (uint8_t)(s > 0 ? 0u : s < 0 ? 1u : !step_adv_off);
+        break;
+    case MI_DPREV:                                     /* (2.7.1) right ON, left OFF; OCT+ toggles (ui_studio.c drum_hear) */
+        drum_preview = (uint8_t)(s > 0 ? 1u : s < 0 ? 0u : !drum_preview);
+        break;
     case MI_ZOOM:
     case MI_LOWCUT: {                                  /* right ON, left OFF; OCT+ toggles */
         uint32_t *v = i == MI_LOWCUT ? &settings.lowcut : &settings.zoom;
@@ -334,6 +362,14 @@ UI_SMALL static void mi_set(uint32_t i, int32_t s)
             usb_rate = (uint8_t)((usb_rate + 1u) % 3u);
         break;
 #endif
+    case MI_FRESO:                                     /* (2.7.2) 0 (OFF/clean) .. 10, stops at the ends; OCT+ steps round */
+        if (s > 0 && flt_reso < 10u)
+            flt_reso++;
+        else if (s < 0 && flt_reso > 0u)
+            flt_reso--;
+        else if (!s)
+            flt_reso = (uint8_t)((flt_reso >= 10u ? 0u : flt_reso + 1u));
+        break;
 #if FELUCCA_UAC_RX
     case MI_RETURN: {
         static uint8_t before = 128;                    /* OCT+ unmutes to the level it muted */

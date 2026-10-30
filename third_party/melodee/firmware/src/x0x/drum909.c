@@ -1,14 +1,12 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * Modifications Copyright (C) 2026 Kerem Kilic (Ellic Studio) */
+#include "../performance_options.h"
 /* The 9W9 TR-909 voices on the FM-1. A port of 9W9's er99_engine.c,
  * er99_circuit.h, er99_tom909.h and er99_perc909.h (GPL-3.0): the circuit models,
  * the fitted constants, the defaults and the per-trigger pinning are 9W9's, line
  * for line; only the arithmetic substrate changed (see drum909_dsp.h). Comments
  * that explain WHY a constant is what it is live in 9W9 and are not repeated. */
 #include "drum909.h"
-#ifndef MELODEE_DRUM_FAST
-#define MELODEE_DRUM_FAST 1
-#endif
 /* Melodee keeps the circuit voices; metallic voices are synthesized below. */
 
 #define D9_VCA_VT 0.0002f
@@ -735,12 +733,27 @@ static void d9_render_smp(d9_smp_t *s, const d9_bus_t *bus, int n)
         for (int k = 0; k < 6; k++) inc[k] = d9_inc(hz[k] * s->pitch * (s->kind == 3 ? 1.48f : 1.0f));
     s->mute -= m;
     d9_env_anchor(&s->out);
+#if MELODEE_DRUM_FAST
+    /* The six pulse phases are independent of the filters and envelope.
+     * Generate their ordered float sums while the phases stay local. */
+    float metal_samples[CTL];uint32_t ph[6];
+    for(int k=0;k<6;k++)ph[k]=s->ph[k];
+    for(int i=0;i<m;i++){
+        float metal=0.0f;
+        for(int k=0;k<6;k++){ph[k]+=inc[k];metal+=ph[k]&0x80000000u?0.16f:-0.16f;}
+        metal_samples[i]=metal;
+    }
+    for(int k=0;k<6;k++)s->ph[k]=ph[k];
+    for(int i=0;i<m;i++){
+        float metal=metal_samples[i];
+#else
     for (int i = 0; i < m; i++) {
         float metal = 0.0f;
         for (int k = 0; k < 6; k++) {
             s->ph[k] += inc[k];
             metal += s->ph[k] & 0x80000000u ? 0.16f : -0.16f;
         }
+#endif
         float nz = d9_noise(&s->noise);
         float exc = s->kind == 2 ? metal * 0.6f + nz * 0.4f : metal;
         float y = d9_biquad_tick(&s->hp, d9_biquad_tick(&s->bp, exc));

@@ -1,5 +1,5 @@
 diff --git a/README.md b/README.md
-index 6aa65db..afb6053 100644
+index 209004d..d33b23f 100644
 --- a/README.md
 +++ b/README.md
 @@ -1,3 +1,11 @@
@@ -36,14 +36,14 @@ index 0000000..eda41bd
 +exec sh ./build.sh "$@"
 diff --git a/docs/CARTRIDGE_BUILD.md b/docs/CARTRIDGE_BUILD.md
 new file mode 100644
-index 0000000..40ab1ce
+index 0000000..4fea18c
 --- /dev/null
 +++ b/docs/CARTRIDGE_BUILD.md
-@@ -0,0 +1,133 @@
+@@ -0,0 +1,139 @@
 +# Building and testing the cartridge profile
 +
-+This tree is Sloop 2.7.1 (`https://github.com/isod89/sloop-fm1.git`, revision
-+`4ec1ac829fd2bdf2c571ea215fb3d62477d01220`) with the cartridge profile: USB playback on the
++This tree is Sloop 2.8.4 (`https://github.com/isod89/sloop-fm1.git`, revision
++`91f30182d9095e0ecdb43396554f2ce5a67df179`) with the cartridge profile: USB playback on the
 +FM-1 for the audio of the synthesizer running on the ESP32-S3 host, the CARTRIDGE page and the
 +charger control ([USB return](CARTRIDGE_USB_RETURN.md)). Compiling or simulating this firmware
 +does not demonstrate audio on the hardware; USB enumeration, DMA, clocks and the physical output
@@ -63,8 +63,9 @@ index 0000000..40ab1ce
 +
 +`build-cartridge.sh` sets `FELUCCA_CARTRIDGE=1`, `FELUCCA_UAC_RX=1`, `FELUCCA_UAC=0` and
 +`FELUCCA_CDC=0`. The FM-1 receives playback and keeps USB MIDI. USB capture of the master and the
-+CDC console are disabled to leave flash for the receiver; the local engines, projects, OTA and TRS
-+MIDI keep the upstream defaults. The normal build `sh build.sh` keeps its defaults.
++CDC console are disabled, which leaves flash for the receiver and later growth (with capture as
++well the image leaves 772 B free); the local engines, projects, OTA and TRS MIDI keep the upstream
++defaults. The normal build `sh build.sh` keeps its defaults.
 +`tools/build.py` also accepts `FELUCCA_UAC`, `FELUCCA_UAC_48K` and `FELUCCA_UAC_RX`, with values
 +`0` or `1`. `FELUCCA_CARTRIDGE_DIAG=1 sh build-cartridge.sh` adds the receiver counters to the
 +CARTRIDGE footer.
@@ -88,23 +89,23 @@ index 0000000..40ab1ce
 +All mandatory build checks are enabled (flash, RAM, pool, `.ram_text` without calls into XIP,
 +no references to the ROM, register access restricted to `hal/`, loader RAM-only execution).
 +
-+| Resource | Upstream 2.7.1 | Cartridge profile | Diagnostic build | Limit |
++| Resource | Upstream 2.8.4 | Cartridge profile | Diagnostic build | Limit |
 +| --- | ---: | ---: | ---: | ---: |
-+| App image | 577,920 B | **581,096 B** | 581,244 B | 581,564 B |
-+| Free flash | 3,644 B | **468 B** | 320 B | |
-+| RAM `.data + .bss` | 58,892 B | 60,892 B | 60,924 B | 98,304 B |
-+| Low RAM | 22,772 B | 22,772 B | 22,772 B | 29,488 B after the RAM code |
++| App image | 571,776 B | **574,044 B** | 574,828 B | 581,564 B |
++| Free flash | 9,788 B | **7,520 B** | 6,736 B | |
++| RAM `.data + .bss` | 59,340 B | 61,292 B | 61,340 B | 98,304 B |
++| Low RAM | 22,772 B | 22,772 B | 22,772 B | 29,384 B after the RAM code |
 +| Pool | 333,900 B | 333,900 B | 333,900 B | 344,064 B, at least 8,192 B free |
 +| Free pool | 10,164 B | 10,164 B | 10,164 B | |
-+| Packaged loader | 6,879 B | 7,007 B | 7,007 B | |
-+| `.fwsc` package | 610,035 B | 610,163 B | 610,163 B | |
++| Packaged loader | 6,896 B | 7,025 B | 7,025 B | |
++| `.fwsc` package | 610,052 B | 610,181 B | 610,181 B | |
 +
 +The loader also includes `usb.c`, so it carries the shared EP0 validations. The receiver's
 +additional memory is in normal RAM; the pool keeps its reserve.
 +
 +SHA-256 of the cartridge package built from this tree: `felucca.bin`
-+`05dc238006da0c931d654b17c6664e9467fe6cd8f99551f3babf5410354aca58`, `felucca.fwsc`
-+`8a9210c271e8b07c4076ac1bd5a07d6dd67d783694070e585345b595bf1a4e8c`. Sources that use
++`f24376b4b991ff7bff530e6ad571c0288aa0716e2e2e3e64f58995f885f8642a`, `felucca.fwsc`
++`0ddb903337832d496a54facc8a8741690b4430665d3ddf340fa87bcbfffe3d37`. Sources that use
 +`__DATE__`/`__TIME__` change the hashes of a rebuild.
 +
 +## Native tests
@@ -129,13 +130,15 @@ index 0000000..40ab1ce
 +  `tests/uac_rx_ramp_test.c` checks the 5.8 ms fade-in of a start and of a re-prime and the gain's
 +  glide over a block, for USB RETURN and for the cartridge track's LEVEL.
 +- USB: 24 combinations of playback on/off, capture on/off, CDC on/off/hidden and capture rates.
-+  Descriptors, EP0, controls, altsettings and mocked DMA are tested. The descriptors with CDC
++  Descriptors (the AudioControl collection with the streaming interfaces first and MIDI last, and
++  bcdDevice's +0.08 for that order), EP0, controls, altsettings and mocked DMA are tested. The descriptors with CDC
 +  disabled from the menu match byte for byte those of the build without CDC.
-+- Real mixer: RX disabled or zero gain preserve the reference hash `d098dd7f4a0fcc65`; an active
++- Real mixer: RX disabled or zero gain preserve the reference hash `3bf7f24eaf24f5aa`; an active
 +  return modifies the audio and gives the same result for splits 0, 15 and automatic, including
 +  with core 1 simulated by a thread with delays. Each block is consumed once.
-+- Real menu: four capture/CDC variants, knob limits, mute and unmute back to the level it had,
-+  visual refresh and tab width. The gain does not change the persisted settings word.
++- Real menu: four capture/CDC variants (each section one to four rows: USB SERIAL joins the USB
++  section in a CDC build), knob limits, mute and unmute back to the level it had, visual refresh and
++  the six tabs' width. The gain does not change the persisted settings word.
 +- CARTRIDGE page (`tests/cartridge_ui_test.c`): page number among the GLO pages, firmware name
 +  and slots from the reply, the FIRMWARE row and footer, request/retry/timeout/reconnection,
 +  stale replies, a newer cartridge's longer reply, the header following the stream (OK / NO
@@ -145,10 +148,12 @@ index 0000000..40ab1ce
 +  with the engine silent and no double send at OUT = SEQ, steps played with OUT at KEYS, STOP,
 +  MUTE, PRESETS on HOME and on the PRESETS page (crossing into the next and previous engine, and a
 +  second turn dropped while it crosses, a crossing dropped whole by a page entry), OMNI and the
-+  handover back to the internal engine, the All Notes Off at takeover, a panic during a preset fade,
-+  a note-off lost on a full ring, the autosave guard (`cart_quiet`), the battery level with the
++  handover back to the internal engine, the All Notes Off at takeover and a sample's note waiting
++  for a voice's fade dropped there, a panic during a preset fade, a note-off lost on a full ring, a
++  MIDI note in sent to the cartridge and ended when the MIDI input ring loses a message, the
++  autosave guard (`cart_quiet`), the battery level with the
 +  cartridge, the clock and transport with CLOCK at OFF and START on a bar line for a cartridge that
-+  comes back mid-song, LEVEL and MUTE on the return and the track's meter, the 5 s liveness query
++  comes back mid-song, LEVEL, MIDI EXPRESSION and MUTE on the return and the track's meter, the 5 s liveness query
 +  (a PRESETS turn during it kept), the query when the page is left, a signed value's knob
 +  acceleration, and recovery within 4 s after each of six outages in a row.
 +
@@ -157,25 +162,26 @@ index 0000000..40ab1ce
 +idioms. The cartridge project also runs the cartridge client against its real ESP32 server and DSP
 +(`tools/test_sloop_cartridge.sh` there).
 +
-+The full upstream suite (`sh tests/run_tests.sh`) reports two static budget failures that the
-+upstream revision already has: `drums_mix` costs 6,793 against a budget of 6,153 (+10.4%,
-+tolerance +10%) and `fm1_alnk0_irq` 262 against 174 (268 upstream). No golden or budget is changed
-+to hide them; the 182 reference renders, the health, voice and routing checks and the remaining
-+groups pass (the Chromium PWA test is skipped without Playwright). These static limits are not a
++The full upstream suite (`sh tests/run_tests.sh`) reports four static budget failures that the
++upstream revision has on its own build too: `sample_render` costs 593 against a budget of 126,
++`grain_render` 2,387 against 1,734, `drums_mix` 6,811 against 6,153 (+10.7%, tolerance +10%) and
++`fm1_alnk0_irq` 262 against 174 (268 upstream). No golden or budget is changed to hide them; the
++182 reference renders, the health, voice and routing checks and the remaining groups pass (the
++Chromium PWA test is skipped without Playwright). These static limits are not a
 +measurement of the audio deadline on the FM-1.
 +
 +## Limits of the cost evidence
 +
 +`tests/target_budget.py` estimates the assembly cost without changing its budgets; its counting run
-+on this profile's listing gives `mix_block`, which inlines the receiver's `uac_rx_mix`, 3,661
-+instructions (3,432 upstream); `mix_units` 249; `uac_rx_service` 143 instructions, 12 inside loops
-+and no hardware division in those loops.
++on this profile's listing gives `mix_block`, which inlines the receiver's `uac_rx_mix`, 3,701
++instructions (3,501 upstream); `mix_units` 256 (248 upstream); `uac_rx_service` 139 instructions, 12
++inside loops and no hardware division in those loops.
 +These numbers do not measure cycles, worst case or deadlines; inlining and heuristic loop
 +detection change the estimator's weights. The ASRC cost must be measured on the FM-1 with the
 +engines and effects active.
 diff --git a/docs/CARTRIDGE_CONTROL.md b/docs/CARTRIDGE_CONTROL.md
 new file mode 100644
-index 0000000..deea73f
+index 0000000..1acf5e4
 --- /dev/null
 +++ b/docs/CARTRIDGE_CONTROL.md
 @@ -0,0 +1,37 @@
@@ -195,8 +201,8 @@ index 0000000..deea73f
 +
 +The track on the cartridge's MIDI channel (from the reply) is the cartridge track: its notes go
 +out over MIDI, its engine stays silent, it shows the cartridge's names, and PRESETS (HOME, TRACKS,
-+the PRESETS page) browses the cartridge's presets across engines; its LEVEL and MUTE set the USB
-+return and its meter shows it; Sloop sends the cartridge START, STOP and the clock while it answers.
++the PRESETS page) browses the cartridge's presets across engines; its LEVEL, MIDI EXPRESSION and
++MUTE set the USB return and its meter shows it; Sloop sends the cartridge START, STOP and the clock while it answers.
 +See the cartridge project's `docs/CARTRIDGE.md`.
 +
 +The FM-1 and the ESP32 run the same protocol version, or the ESP32 a newer one, read as far as
@@ -218,14 +224,14 @@ index 0000000..deea73f
 +physical validation of the cartridge. Build figures in [CARTRIDGE_BUILD.md](CARTRIDGE_BUILD.md).
 diff --git a/docs/CARTRIDGE_USB_RETURN.md b/docs/CARTRIDGE_USB_RETURN.md
 new file mode 100644
-index 0000000..702f80b
+index 0000000..184911c
 --- /dev/null
 +++ b/docs/CARTRIDGE_USB_RETURN.md
-@@ -0,0 +1,191 @@
+@@ -0,0 +1,201 @@
 +# Cartridge USB return
 +
-+This tree is Sloop 2.7.1 (`https://github.com/isod89/sloop-fm1.git`, revision
-+`4ec1ac829fd2bdf2c571ea215fb3d62477d01220`) with the cartridge profile: USB audio playback into
++This tree is Sloop 2.8.4 (`https://github.com/isod89/sloop-fm1.git`, revision
++`91f30182d9095e0ecdb43396554f2ce5a67df179`) with the cartridge profile: USB audio playback into
 +the FM-1, the CARTRIDGE page that controls the cartridge, and the FM-1 charger control. The code
 +and the native tests cover the software side; enumeration, physical audio, power, processor load
 +and latency on the FM-1 are measured on the bench.
@@ -243,18 +249,23 @@ index 0000000..702f80b
 +[build and tests](CARTRIDGE_BUILD.md).
 +
 +The return endpoint is **0x04 OUT**, adaptive isochronous, at most 180 bytes per 1 ms packet.
-+The interface is `2 + FELUCCA_UAC`; the host discovers it from the descriptors. The format is
++The interface is `2 + FELUCCA_UAC`; the host discovers it from the descriptors. As upstream does
++for its audio input, the AudioControl header lists the audio streaming interfaces first and MIDI
++last (macOS up to 15 drops the MIDI interface from the list while walking it and would miss the
++streaming interface listed after it), and bcdDevice reads 4.08 (4.xx: playback; +0.08 that order,
++so a host that cached older descriptors reads them again). The format is
 +PCM signed 16-bit little-endian, two channels, 44,100 Hz. There is no feedback endpoint and no
 +48 kHz playback rate; the rate controls accept only 44,100. MIDI stays on 0x01/0x81.
 +
 +The experimental profile with capture uses 0x84 IN and 0x04 OUT at the same time. Its
-+descriptors and EP0 are exercised in simulation only; duplex operation on the physical
-+controller, and whether each such profile fits in the application slot, are not established.
-+Use the dedicated profile.
++descriptors and EP0 are exercised in simulation only, and duplex operation on the physical
++controller is not established; the cartridge build with capture as well (`FELUCCA_UAC=1`) fits
++the application slot with 772 B free. Use the dedicated profile.
 +
 +## Controls on the FM-1
 +
-+1. In the menu opened by HOME, use SELECT to reach the **USB** section.
++1. In the menu opened by HOME, use SELECT to reach the **USB** section (SCREEN, LIGHTS, AUDIO,
++   SEQ, USB, SYS: with six sections the SYSTEM tab reads SYS so that they fit the screen).
 +2. **KNOB 1 / USB RETURN** sets the gain from OFF to 100%.
 +3. **OCT+** mutes, and pressed again brings back the level it had. The state is RAM-only:
 +   restarting restores 100%.
@@ -280,7 +291,12 @@ index 0000000..702f80b
 +and the notes sent are ended when it gives it back or the track is muted. A note-off dropped by a
 +full MIDI OUT ring (`usb.c` `midi_out_event`) is followed by an All Notes Off on its channel once
 +there is room. The same block sets the return's level from the cartridge track's LEVEL (its default
-+is unity) and MUTE, and feeds the track's meter with the return's peak. The cartridge's polyphony
++is unity), MIDI EXPRESSION (CC 11, as on any track) and MUTE, and feeds the track's meter with the
++return's peak; a sample's note its engine had waiting for a voice's fade is dropped at the takeover.
++The notes a player holds on the cartridge track behave as on any track: the sequencer neither
++restarts nor ends them, and a note-off lost on a full MIDI input ring ends the notes MIDI held,
++which then end on the cartridge too. A MIDI Program Change (with its Bank Select) received for the
++cartridge track changes the track's own, silent sound, not the cartridge's preset. The cartridge's polyphony
 +depends on the firmware it runs. Sloop's knobs do not send CC. While the cartridge answers, CLOCK
 +OUT runs even at OFF (`seq.c` `clkout_block`), unless SYNC follows an external clock.
 +`cart_quiet` holds the autosave and the section saves, whose flash erase runs with the interrupts
@@ -789,10 +805,10 @@ index 0000000..93c79df
 +}
 +#endif
 diff --git a/firmware/src/core.h b/firmware/src/core.h
-index 5b6e21a..ae91a50 100644
+index e6b875c..75feec7 100644
 --- a/firmware/src/core.h
 +++ b/firmware/src/core.h
-@@ -374,6 +374,15 @@ static inline int32_t send_thr(int32_t s, int32_t g) { return g ? s + (((127 * 2
+@@ -395,6 +395,15 @@ static inline int32_t send_thr(int32_t s, int32_t g) { return g ? s + (((127 * 2
  #define TSEL (&trk[song.sel])    /* the selected track */
  #define TDRUM (&trk[TRK_DRUM])
  static int is_drum(const track_t *t) { return t == TDRUM; }
@@ -877,10 +893,10 @@ index 9b0d354..34df6f1 100644
  }
  #endif
 diff --git a/firmware/src/fx.c b/firmware/src/fx.c
-index db69782..9c91c95 100644
+index 75fc88c..f23a68f 100644
 --- a/firmware/src/fx.c
 +++ b/firmware/src/fx.c
-@@ -863,7 +863,7 @@ static void mix_units(uint32_t mask, uint32_t n, mixacc_t *mx, int32_t *scratch)
+@@ -874,7 +874,7 @@ static void mix_units(uint32_t mask, uint32_t n, mixacc_t *mx, int32_t *scratch)
  {
      uint32_t k;
      for (k = 0; k < NPART; k++)
@@ -889,7 +905,7 @@ index db69782..9c91c95 100644
              mix_part(&trk[k], n, mx, scratch);
      if (mask & U_DRUMS)
          mix_drums(n, mx);
-@@ -1204,6 +1204,9 @@ static void mix_block(int32_t *out, uint32_t n)
+@@ -1215,6 +1215,9 @@ static void mix_block(int32_t *out, uint32_t n)
              acc[0].sr[i] += acc[1].sr[i];
          }
      }
@@ -900,7 +916,7 @@ index db69782..9c91c95 100644
                                                           * (what it adds does not depend on them: the same sum) */
      punch_freeze_feed(acc[0].sr, mix_l, mix_r, n);     /* punch-in FREEZE: the whole dry mix into the held reverb */
 diff --git a/firmware/src/main.c b/firmware/src/main.c
-index fe3de9a..78ee055 100644
+index be0702d..b7a5d72 100644
 --- a/firmware/src/main.c
 +++ b/firmware/src/main.c
 @@ -62,8 +62,8 @@ UI_SMALL static uint32_t stack_sp(void) { return fm1_sp(); }
@@ -925,7 +941,7 @@ index fe3de9a..78ee055 100644
  #endif
          t5_nested_ticks += fm1_ticks() - t0;
          return;
-@@ -156,6 +160,9 @@ UI_SMALL static void fm1_fault(const fm1_crash_t *c)
+@@ -160,6 +164,9 @@ UI_SMALL static void fm1_fault(const fm1_crash_t *c)
      t0 = fm1_ticks();
      while ((uint32_t)(fm1_ticks() - t0) < 10000u * 1000u * FM1_TICKS_PER_US)   /* (2.7.1: 10 s, time for a photo) */
          ;
@@ -935,7 +951,7 @@ index fe3de9a..78ee055 100644
      fm1_reboot();
  }
  
-@@ -232,6 +239,9 @@ UI_SMALL static void fm1_main(void)
+@@ -237,6 +244,9 @@ UI_SMALL static void fm1_main(void)
  #endif
  #if FELUCCA_UAC && FELUCCA_UAC_48K
      usb_rate_mode = usb_rate;                           /* menu USB RATE (2.7 beta), the same way */
@@ -945,7 +961,7 @@ index fe3de9a..78ee055 100644
  #endif
      usb_start();
  #if FELUCCA_UART
-@@ -305,10 +315,16 @@ UI_SMALL static void fm1_main(void)
+@@ -310,10 +320,16 @@ UI_SMALL static void fm1_main(void)
                  usb_detach();
                  fm1_delay_ms(30);
                  bootguard.pending = 0;                  /* intentional reset: not a failed boot */
@@ -962,7 +978,7 @@ index fe3de9a..78ee055 100644
          ed_service();                                   /* web editor SysEx */
          ota_service();                                  /* M-UPGRADE handshake */
          if (usb.ota_req) {                              /* M-UPGRADE upgrade command */
-@@ -334,6 +350,9 @@ UI_SMALL static void fm1_main(void)
+@@ -339,6 +355,9 @@ UI_SMALL static void fm1_main(void)
              usb_detach();
              fm1_delay_ms(30);
              bootguard.pending = 0;
@@ -972,7 +988,7 @@ index fe3de9a..78ee055 100644
              fm1_enter_uboot();
          }
  #if FELUCCA_CDC
-@@ -356,6 +375,9 @@ UI_SMALL static void fm1_main(void)
+@@ -361,6 +380,9 @@ UI_SMALL static void fm1_main(void)
          while (fm1_ms - m < 15u) {                               /* ~60 UI frames/s at most */
              ui_input();
  #if FELUCCA_OTA
@@ -982,7 +998,7 @@ index fe3de9a..78ee055 100644
              ed_service();                       /* editor replies without waiting for the next frame */
  #endif
          }
-@@ -376,6 +398,12 @@ UI_SMALL void fm1_cstart(void)
+@@ -383,6 +405,12 @@ UI_SMALL void fm1_cstart(void)
      if ((p3 & 1u) && !(p3 & (4u | 0x40u)))
          bootguard_clear(&bootguard);           /* a power-on (not a watchdog or soft reset): no failed boot to count */
      boot_mode = bootguard_begin(&bootguard);
@@ -996,10 +1012,10 @@ index fe3de9a..78ee055 100644
          fm1_enter_uboot();
      }
 diff --git a/firmware/src/params.c b/firmware/src/params.c
-index b2bbe27..5cac60b 100644
+index 6e26146..3f44570 100644
 --- a/firmware/src/params.c
 +++ b/firmware/src/params.c
-@@ -382,7 +382,7 @@ static void param_format(const param_desc_t *d, int32_t v, char *val, const char
+@@ -383,7 +383,7 @@ static void param_format(const param_desc_t *d, int32_t v, char *val, const char
  /* ------------------------------------------------------------ pages --- */
  enum { FAM_HOME, FAM_ENV, FAM_LFO, FAM_FX, FAM_SCL, FAM_EDIT, FAM_GLO, FAM_SAVE, FAM_ARP, FAM_SEQ, FAM_TRK,
         FAM_COUNT };
@@ -1008,7 +1024,7 @@ index b2bbe27..5cac60b 100644
  enum { GR_NONE, GR_ADSR, GR_LFO, GR_STEPS, GR_ARP, GR_SCALE, GR_FX, GR_ROLL, GR_BROWSE, GR_SLOTS, GR_USER, GR_TRK,
         GR_SLCR, GR_INS };
  
-@@ -415,6 +415,9 @@ static const page_t PAGES[] = {
+@@ -416,6 +416,9 @@ static const page_t PAGES[] = {
      {"VOICE", FAM_EDIT, SC_TRACK, GR_NONE, {P_VOICE, P_GLIDE, P_GLMODE, P_PRIO}},
      {"VOICE 2", FAM_EDIT, SC_TRACK, GR_NONE, {P_ALLOC, P_DETUNE, P_PAN, P_MUTE}},
      {"GLOBAL", FAM_GLO, SC_GLOBAL, GR_NONE, {G_BPM, G_SWING, G_CLOCK, G_TUNE}},
@@ -1018,7 +1034,7 @@ index b2bbe27..5cac60b 100644
      {"MASTER", FAM_GLO, SC_GLOBAL, GR_NONE, {G_DUST, G_DUCK, G_FILT, G_ROLL}},
      {"SYSTEM", FAM_GLO, SC_GLOBAL, GR_NONE, {G_MIDI, G_SYNC, G_ROUTE, G_INFO}},
      {"DRUMS", FAM_GLO, SC_GLOBAL, GR_NONE, {G_DRCH, G_DRLVL, G_DRREV, G_DRDLY}},   /* GM kit on MIDI ch 10 */
-@@ -446,7 +449,7 @@ static int page_for_drum(const page_t *pg)
+@@ -448,7 +451,7 @@ static int page_for_drum(const page_t *pg)
  {
      if (pg->scope == SC_STEP)                       /* (2.4) the synth steps' roll: the drums have their grid. Reached */
          return 0;                                   /* by ALGO from a synth track, it drew the drum steps as notes */
@@ -1026,12 +1042,12 @@ index b2bbe27..5cac60b 100644
 +    if (pg->scope == SC_GLOBAL || pg->scope == SC_CART)
          return pg->graph != GR_BROWSE && pg->graph != GR_USER;
      return pg->scope != SC_ENGINE && (pg->scope != SC_TRACK || pg->fam == FAM_SEQ || pg->graph == GR_SLCR ||
-                                       pg->graph == GR_INS);
+                                       pg->graph == GR_INS || pg->id[0] == P_TFLT);   /* (2.7.2: FX > FILTER too, the
 diff --git a/firmware/src/project.c b/firmware/src/project.c
-index 9d4551e..d434c4f 100644
+index acce904..12c0390 100644
 --- a/firmware/src/project.c
 +++ b/firmware/src/project.c
-@@ -686,6 +686,13 @@ UI_SMALL static int audio_quiet(void)
+@@ -705,6 +705,13 @@ UI_SMALL static int audio_quiet(void)
      for (i = 0; i < NDRUM; i++)
          if (drums.v[i].active)
              return 0;
@@ -1046,10 +1062,10 @@ index 9d4551e..d434c4f 100644
  }
  
 diff --git a/firmware/src/seq.c b/firmware/src/seq.c
-index c04fb84..fde6add 100644
+index 379606c..c4e39d4 100644
 --- a/firmware/src/seq.c
 +++ b/firmware/src/seq.c
-@@ -107,6 +107,8 @@ static uint8_t mo_any;                     /* something was sent on since the la
+@@ -108,6 +108,8 @@ static uint8_t mo_any;                     /* something was sent on since the la
  static void seq_out_on(const track_t *t, uint32_t note, uint32_t vel)
  {
      uint32_t i = trk_index(t) % NTRK;
@@ -1058,7 +1074,7 @@ index c04fb84..fde6add 100644
      if (!song.g[G_MIDI] || note > 127u)
          return;
      seq_out_off(t, note);                      /* played again while on: off first */
-@@ -130,6 +132,102 @@ static void seq_out_track_off(const track_t *t)      /* every note of the track
+@@ -131,6 +133,104 @@ static void seq_out_track_off(const track_t *t)      /* every note of the track
                  midi_out_note(mo_ch[i], (w * 32u + b), 0);
              }
  }
@@ -1127,9 +1143,10 @@ index c04fb84..fde6add 100644
 +    midi_out_lost_flush();
 +    uar_peak = 0;
 +    for (k = 0; k < NPART; k++)                         /* the USB return plays at the cartridge track's LEVEL (its */
-+        if ((now >> k) & 1u) {                          /* default: unity) and MUTE; its meter shows the return */
++        if ((now >> k) & 1u) {                          /* default: unity), MIDI EXPRESSION and MUTE; its meter shows
++                                                         * the return */
 +            uint32_t g = trk_silent(&trk[k]) ? 0u
-+                       : (uint32_t)LEVEL_Q12[trk[k].p[P_LEVEL] & 127] * 4096u / LEVEL_Q12[TP[P_LEVEL].def];
++                       : (uint32_t)expr_gain(LEVEL_Q12[trk[k].p[P_LEVEL] & 127], k) * 4096u / LEVEL_Q12[TP[P_LEVEL].def];
 +            if (g > q) q = g;
 +            if ((int32_t)pk > trk[k].peak) trk[k].peak = (int32_t)pk;
 +        }
@@ -1143,7 +1160,8 @@ index c04fb84..fde6add 100644
 +        track_t *t = &trk[k];
 +        if ((taken >> k) & 1u) {
 +            for (i = 0; i < NVOICE; i++)
-+                t->v[i].active = t->v[i].gate = t->v[i].stage = 0;
++                t->v[i].active = t->v[i].gate = t->v[i].stage = t->v[i].pend = 0;   /* (pend: a sample's note
++                                                         * waiting for its fade, voice.c: it would start when given back) */
 +            t->nmono = 0;
 +            t->mono_note = 0;
 +            t->xp_n = 0;
@@ -1161,16 +1179,16 @@ index c04fb84..fde6add 100644
  static void seq_out_all_off(void)
  {
      uint32_t i;
-@@ -1478,7 +1576,7 @@ static void kh_release(track_t *t)                  /* every held note ends */
-                     ft_note_off(n);
+@@ -1879,7 +1979,7 @@ static void kh_release(track_t *t)                  /* every held note ends */
                  rec_release(t, n);
+                 live_set(t, n, 0);                /* (2.8.3: no longer held for a player) */
                  trk_note_off(t, n);
 -                if ((kh_mo[ti][w] >> b) & 1u)
 +                if (((kh_mo[ti][w] >> b) & 1u) && !CART_TRACK(t))
                      midi_out_note(kh_mc[ti], n, 0);
              }
      memset(kh_set[ti], 0, sizeof kh_set[ti]);
-@@ -1740,7 +1838,8 @@ static void chord_revoice(uint32_t sel)
+@@ -2150,7 +2250,8 @@ static void chord_revoice(uint32_t sel)
                  } else {
                      input_off(t, n);
                  }
@@ -1180,7 +1198,7 @@ index c04fb84..fde6add 100644
              }
          }
          for (j = 0; j < nn; j++) {                  /* the notes it gains */
-@@ -1750,7 +1849,8 @@ static void chord_revoice(uint32_t sel)
+@@ -2160,7 +2261,8 @@ static void chord_revoice(uint32_t sel)
                  in_key = (uint8_t)(k + 1u);         /* (a chord's new note: of this key, #191) */
                  input_on(t, nw[j], 100);
                  in_key = 0;
@@ -1190,7 +1208,7 @@ index c04fb84..fde6add 100644
              }
          }
          memcpy(kb_nt[k], nw, nn);
-@@ -1898,7 +1998,8 @@ static void key_down(uint32_t k)
+@@ -2308,7 +2410,8 @@ static void key_down(uint32_t k)
              in_chord_i = i;
              input_on(t, kb_nt[k][i], 100);
              in_chord = 0;
@@ -1200,7 +1218,7 @@ index c04fb84..fde6add 100644
          }
          in_key = 0;
          /* the pen of the SEQ layer: the keys down now (a chord), else this note */
-@@ -1947,7 +2048,7 @@ static void key_up(uint32_t k)
+@@ -2357,7 +2460,7 @@ static void key_up(uint32_t k)
              if (kh_on(t) && kh_has(t, n)) {         /* (2.7) KBD HOLD: its MIDI note-off waits with it */
                  kh_mo[kb_trk[k] % NTRK][(n >> 5) & 3u] |= 1u << (n & 31u);
                  kh_mc[kb_trk[k] % NTRK] = (uint8_t)mc;
@@ -1209,7 +1227,7 @@ index c04fb84..fde6add 100644
                  midi_out_note(mc, n, 0);
              }
          }
-@@ -2792,12 +2893,24 @@ static uint32_t mclk_adv(uint32_t n)               /* units to advance this bloc
+@@ -3242,12 +3345,24 @@ static uint32_t mclk_adv(uint32_t n)               /* units to advance this bloc
   * stopped too (the other gear knows the tempo before PLAY); START as the sequencer starts (after a count-in: when it
   * starts), with the pulse of its downbeat; STOP when it stops (CLK OUT or SYNC changed while playing: STOP too). Only
   * while SYNC is INT: a FM-1 that follows a clock never sends one back (no loop through a computer). A pulse goes out
@@ -1235,7 +1253,7 @@ index c04fb84..fde6add 100644
          if (mco_play)
              midi_out_event(0x0Fu | 0xFCu << 8);       /* STOP */
          mco_play = 0;
-@@ -2805,14 +2918,22 @@ static void clkout_block(uint32_t n)
+@@ -3255,14 +3370,22 @@ static void clkout_block(uint32_t n)
          return;
      }
      if (song.playing && !mco_play) {
@@ -1263,7 +1281,7 @@ index c04fb84..fde6add 100644
      while (mco_u >= MCLK_PULSE_U) {
          mco_u -= MCLK_PULSE_U;
          midi_out_event(0x0Fu | 0xF8u << 8);           /* a pulse */
-@@ -2824,6 +2945,9 @@ static void clkout_block(uint32_t n)
+@@ -3274,6 +3397,9 @@ static void clkout_block(uint32_t n)
  static void events_block(uint32_t n)
  {
      uint32_t i, pr, adv;
@@ -1273,7 +1291,7 @@ index c04fb84..fde6add 100644
      if (mo_any && !song.g[G_MIDI]) {            /* MIDI = KEYS again: end what the sequencer had sent */
          seq_out_all_off();
          mo_any = 0;
-@@ -2946,7 +3070,7 @@ static void events_block(uint32_t n)
+@@ -3396,7 +3522,7 @@ static void events_block(uint32_t n)
          track_t *t = &trk[i];
          if ((pr >> i) & 1u) {
              kh_release(t);                            /* (2.7) KBD HOLD: what it held ends */
@@ -1754,7 +1772,7 @@ index 0000000..6790b12
 +    cv_blit(0, CART_FOOT_Y);
 +}
 diff --git a/firmware/src/ui_draw.c b/firmware/src/ui_draw.c
-index 138eefb..b9079f0 100644
+index e2f712b..74d7971 100644
 --- a/firmware/src/ui_draw.c
 +++ b/firmware/src/ui_draw.c
 @@ -28,10 +28,15 @@ UI_SMALL static int32_t batt_level(void)                         /* ADC ch3 thre
@@ -1774,7 +1792,7 @@ index 138eefb..b9079f0 100644
          return 1 + (int32_t)((fm1_ms / 600u) % 3u);
      return batt_level();
  }
-@@ -379,6 +384,10 @@ UI_SMALL static uint32_t graph_signature(void)
+@@ -437,6 +442,10 @@ UI_SMALL static uint32_t graph_signature(void)
      for (i = 0; i < P_COUNT; i++)
          h = (h ^ (uint32_t)t->p[i]) * 16777619u;
      h ^= (uint32_t)TSEL->preset * 7u + (uint32_t)song.g[G_SLOT] * 13u + TSEL->user * 257u + up_gen * 7919u + ui.uslot * 104729u;
@@ -1785,7 +1803,7 @@ index 138eefb..b9079f0 100644
      {   /* (2.7) the favourites: the PRESETS list and its FAV column */
          uint32_t q;
          for (q = 0; q < FAV_N; q++) h = h * 31u + fav[q];
-@@ -401,6 +410,19 @@ UI_SMALL static void graph_browse(void)
+@@ -460,6 +469,19 @@ UI_SMALL static void graph_browse(void)
  {
      uint32_t total, cur = preset_pos(&total), e, k;
      int32_t row;
@@ -1805,7 +1823,7 @@ index 138eefb..b9079f0 100644
      if (!total)
          return;
      for (row = -3; row <= 3; row++) {
-@@ -496,6 +518,13 @@ UI_SMALL static void trk_short_name(uint32_t c, char *b)      /* the track's sou
+@@ -555,6 +577,13 @@ UI_SMALL static void trk_short_name(uint32_t c, char *b)      /* the track's sou
  {
      const track_t *t = &trk[c];
      const engine_t *e = ENGINES[t->eng_req % NENGINES];
@@ -1819,7 +1837,7 @@ index 138eefb..b9079f0 100644
      if (c == TRK_DRUM)
          str_cpy(b, "DRUM", 13);
      else if (user_of(t) < UP_SLOTS)
-@@ -791,8 +820,17 @@ UI_SMALL static void draw_foot(void)
+@@ -851,8 +880,17 @@ UI_SMALL static void draw_foot(void)
          up_name(user_of(t), pn);                       /* a user preset */
      else if (e->npresets)
          str_cpy(pn, e->presets[TSEL->preset % e->npresets].name, sizeof pn);
@@ -1838,7 +1856,7 @@ index 138eefb..b9079f0 100644
      } else {                                           /* page title + number in its family: "ENV DEST 2/2" */
          uint32_t n, k = page_pos(&n);
          const char *pt = pg->scope == SC_ENGINE ? e->page_title[pg->id[0] != P_E0] : 0;   /* EDIT: the engine's */
-@@ -895,6 +933,21 @@ UI_SMALL static void draw_columns(void)
+@@ -955,6 +993,21 @@ UI_SMALL static void draw_columns(void)
      if (cur_page()->graph == GR_BROWSE) {
          uint32_t total, cur = preset_pos(&total);
          char u[8];
@@ -1860,7 +1878,7 @@ index 138eefb..b9079f0 100644
          fmt_int(val, (int32_t)cur + 1);
          str_cpy(u, "/", 8);
          fmt_int(u + 1, (int32_t)total);
-@@ -995,6 +1048,9 @@ UI_SMALL static void ui_timers(void)
+@@ -1049,6 +1102,9 @@ UI_SMALL static void ui_timers(void)
  static void vis_draw(void);                     /* ui_vis.c */
  static int vis_shown(void);
  static uint8_t vis_on, vis_shown_last, vis_name_t;   /* the visualiser (ui_vis.c): on, drawn last frame, its name's time */
@@ -1870,7 +1888,7 @@ index 138eefb..b9079f0 100644
  UI_SMALL static void ui_draw(void)
  {
      ui.frame++;
-@@ -1084,6 +1140,11 @@ UI_SMALL static void ui_draw(void)
+@@ -1138,6 +1194,11 @@ UI_SMALL static void ui_draw(void)
          ui.force = 0;
          return;
      }
@@ -1883,10 +1901,10 @@ index 138eefb..b9079f0 100644
      if (ui.force)
          draw_frame();
 diff --git a/firmware/src/ui_input.c b/firmware/src/ui_input.c
-index 1335bb6..b6c6f27 100644
+index b25fbbf..6511f3c 100644
 --- a/firmware/src/ui_input.c
 +++ b/firmware/src/ui_input.c
-@@ -409,6 +409,16 @@ UI_SMALL static void edit_param(uint32_t slot, int32_t steps)
+@@ -499,6 +499,16 @@ UI_SMALL static void edit_param(uint32_t slot, int32_t steps)
      const param_desc_t *d;
      uint32_t id = pg->id[slot];
      int32_t v;
@@ -1903,7 +1921,7 @@ index 1335bb6..b6c6f27 100644
      if (is_drum(TSEL) && !page_for_drum(pg))
          return;                                           /* "DRUM TRACK": nothing to edit here */
      if (pg->scope == SC_STEP) {
-@@ -420,6 +430,15 @@ UI_SMALL static void edit_param(uint32_t slot, int32_t steps)
+@@ -510,6 +520,15 @@ UI_SMALL static void edit_param(uint32_t slot, int32_t steps)
          return;
      }
      if (pg->graph == GR_BROWSE) {                         /* KNOB 1: one preset, KNOB 2: the next / previous engine */
@@ -1919,7 +1937,7 @@ index 1335bb6..b6c6f27 100644
          if (slot == 0u && !is_drum(TSEL)) {
              uint32_t total, cur = preset_pos(&total);
              if (total)
-@@ -1127,6 +1146,11 @@ UI_SMALL static void ui_input(void)
+@@ -1271,6 +1290,11 @@ UI_SMALL static void ui_input(void)
           * page and TRACKS only (the drum track: its kits); elsewhere a stray turn would throw away the sound
           * being edited. Every detent counts */
          uint32_t total, cur = preset_pos(&total);
@@ -1932,68 +1950,79 @@ index 1335bb6..b6c6f27 100644
              TDRUM->p[P_E0] = (int16_t)clamp(TDRUM->p[P_E0] + s, 0, DRUM_KITS - 1);
          else if (total)
 diff --git a/firmware/src/ui_menu.c b/firmware/src/ui_menu.c
-index a0d96bc..c61381e 100644
+index ff8b1e1..74e1d8d 100644
 --- a/firmware/src/ui_menu.c
 +++ b/firmware/src/ui_menu.c
-@@ -7,19 +7,58 @@
+@@ -7,19 +7,69 @@
   * OCT- closes (from ABOUT: back to the section). */
  /* ------------------------------------------------------------ menu --- */
  /* (2.7: USB SERIAL only in a build with the serial console, FELUCCA_CDC=1: the FM-1's build has none) */
 -enum { MI_COLOR, MI_ZOOM, MI_ACCEL, MI_LIGHTS, MI_KEYS, MI_NOTES, MI_LOWCUT, MI_USB,
 +/* Capture-only settings are hidden in the playback-only cartridge profile.
-+ * Return gain is live RAM state, deliberately outside the persisted settings layout. */
++ * Return gain is live RAM state, deliberately outside the persisted settings layout.
++ * With playback (FELUCCA_UAC_RX) a USB section comes before SYSTEM: USB RETURN, CHARGE (cartridge profile) and
++ * USB SERIAL (CDC builds), so that AUDIO keeps four rows at most; six tabs fit 240 pixels with SYSTEM as SYS. */
 +#define MI_CAPTURE (!FELUCCA_UAC_RX || FELUCCA_UAC)
 +enum { MI_COLOR, MI_ZOOM, MI_ACCEL, MI_LIGHTS, MI_KEYS, MI_NOTES, MI_LOWCUT,
 +#if MI_CAPTURE
 +       MI_USB,
 +#endif
- #if FELUCCA_CDC
-        MI_SERIAL,
- #endif
--       MI_RATE, MI_CPU1, MI_PANEL, MI_LCLEAR, MI_ABOUT, MI_COUNT };
--static const char *const MI_NAME[MI_COUNT] = {"COLOR", "ZOOM", "KNOB ACCEL", "LIGHTS", "KEYS", "NOTES", "SPEAKER LOWCUT", "USB AUDIO",
++#if FELUCCA_CDC && !FELUCCA_UAC_RX
++       MI_SERIAL,
++#endif
 +#if MI_CAPTURE
 +       MI_RATE,
 +#endif
++       MI_FRESO, MI_ADV, MI_DPREV,
 +#if FELUCCA_UAC_RX
 +       MI_RETURN,
 +#if FELUCCA_CARTRIDGE
 +       MI_CHARGE,
 +#endif
+ #if FELUCCA_CDC
+        MI_SERIAL,
+ #endif
+-       MI_RATE, MI_FRESO, MI_ADV, MI_DPREV, MI_CPU1, MI_PANEL, MI_LCLEAR, MI_ABOUT, MI_COUNT };
+-static const char *const MI_NAME[MI_COUNT] = {"COLOR", "ZOOM", "KNOB ACCEL", "LIGHTS", "KEYS", "NOTES", "SPEAKER LOWCUT", "USB AUDIO",
 +#endif
 +       MI_CPU1, MI_PANEL, MI_LCLEAR, MI_ABOUT, MI_COUNT };
 +static const char *const MI_NAME[MI_COUNT] = {"COLOR", "ZOOM", "KNOB ACCEL", "LIGHTS", "KEYS", "NOTES", "SPEAKER LOWCUT",
 +#if MI_CAPTURE
 +                                              "USB AUDIO",
 +#endif
- #if FELUCCA_CDC
-                                               "USB SERIAL",
- #endif
--                                              "USB RATE", "2ND CORE", "HARDWARE CALIBRATION", "MIDI LEARN CLEAR", "ABOUT"};
--enum { MS_SCREEN, MS_LIGHTS, MS_AUDIO, MS_SYSTEM, MS_COUNT };
--static const char *const MS_NAME[MS_COUNT] = {"SCREEN", "LIGHTS", "AUDIO", "SYSTEM"};   /* (AUDIO: and USB) */
--static const uint8_t MS_FIRST[MS_COUNT + 1] = {MI_COLOR, MI_LIGHTS, MI_LOWCUT, MI_CPU1, MI_COUNT};   /* rows of each */
++#if FELUCCA_CDC && !FELUCCA_UAC_RX
++                                              "USB SERIAL",
++#endif
 +#if MI_CAPTURE
 +                                              "USB RATE",
 +#endif
++                                              "FILTER RESO", "STEP ADVANCE", "DRUM PREVIEW",
 +#if FELUCCA_UAC_RX
 +                                              "USB RETURN",
 +#if FELUCCA_CARTRIDGE
 +                                              "CHARGE",
 +#endif
+ #if FELUCCA_CDC
+                                               "USB SERIAL",
+ #endif
+-                                              "USB RATE", "FILTER RESO", "STEP ADVANCE", "DRUM PREVIEW", "2ND CORE", "HARDWARE CALIBRATION", "MIDI LEARN CLEAR", "ABOUT"};
+-enum { MS_SCREEN, MS_LIGHTS, MS_AUDIO, MS_SEQ, MS_SYSTEM, MS_COUNT };   /* (2.7.1: SEQ) */
+-static const char *const MS_NAME[MS_COUNT] = {"SCREEN", "LIGHTS", "AUDIO", "SEQ", "SYSTEM"};   /* (AUDIO: and USB) */
+-static const uint8_t MS_FIRST[MS_COUNT + 1] = {MI_COLOR, MI_LIGHTS, MI_LOWCUT, MI_ADV, MI_CPU1, MI_COUNT};   /* rows of each */
 +#endif
 +                                              "2ND CORE", "HARDWARE CALIBRATION", "MIDI LEARN CLEAR", "ABOUT"};
-+enum { MS_SCREEN, MS_LIGHTS, MS_AUDIO,
++enum { MS_SCREEN, MS_LIGHTS, MS_AUDIO, MS_SEQ,   /* (2.7.1: SEQ) */
 +#if FELUCCA_UAC_RX
 +       MS_RETURN,
 +#endif
 +       MS_SYSTEM, MS_COUNT };
-+static const char *const MS_NAME[MS_COUNT] = {"SCREEN", "LIGHTS", "AUDIO",
++static const char *const MS_NAME[MS_COUNT] = {"SCREEN", "LIGHTS", "AUDIO", "SEQ",   /* (AUDIO: and USB) */
 +#if FELUCCA_UAC_RX
-+                                            "USB",
-+#endif
++                                            "USB", "SYS"};
++#else
 +                                            "SYSTEM"};
-+static const uint8_t MS_FIRST[MS_COUNT + 1] = {MI_COLOR, MI_LIGHTS, MI_LOWCUT,
++#endif
++static const uint8_t MS_FIRST[MS_COUNT + 1] = {MI_COLOR, MI_LIGHTS, MI_LOWCUT, MI_ADV,   /* rows of each */
 +#if FELUCCA_UAC_RX
 +                                             MI_RETURN,
 +#endif
@@ -2001,15 +2030,15 @@ index a0d96bc..c61381e 100644
  
  UI_SMALL static int mi_cpu1_have(void)                      /* the second core is running (cpu1.c; the host tests have no cpu1.c) */
  {
-@@ -33,6 +72,7 @@ static const char *const LIGHTS_NAME[LIGHTS_N] = {"OFF", "LOW", "MID", "HIGH"};
+@@ -33,6 +83,7 @@ static const char *const LIGHTS_NAME[LIGHTS_N] = {"OFF", "LOW", "MID", "HIGH"};
  static const char *const KEYS_NAME[KEYS_N] = {"OFF", "C KEYS", "WHITE KEYS", "ALL KEYS"};      /* keys lit too, at the LIGHTS level */
  #define MI_Y0 26                                   /* the first row, under the section tabs */
  #define MI_DY 50                                   /* a row: the label, the value in large type */
-+#define MI_TAB_GAP (FELUCCA_UAC_RX ? 4 : 10)          /* five sections must still fit 240 pixels */
++#define MI_TAB_GAP (FELUCCA_UAC_RX ? 4 : 6)           /* six sections (USB, SYS) end at 232, five at 236 */
  
  UI_SMALL static uint32_t mi_sec(uint32_t i)                 /* the section of item i */
  {
-@@ -66,14 +106,31 @@ UI_SMALL static const char *mi_value(uint32_t i, uint16_t *c)
+@@ -68,14 +119,18 @@ UI_SMALL static const char *mi_value(uint32_t i, uint16_t *c)
          return KEYS_NAME[lights_keys % KEYS_N];
      case MI_NOTES: return lights_notes ? "ON" : "OFF";
      case MI_LOWCUT: return settings.lowcut ? "ON" : "OFF";
@@ -2025,6 +2054,13 @@ index a0d96bc..c61381e 100644
          return R[usb_rate % 3u];
      }
 +#endif
+     case MI_FRESO: {                                  /* (2.7.2) the track filter's resonance, 0 (clean) .. 10 (fx.c) */
+         static char b[4];
+         if (!flt_reso) {
+@@ -85,6 +140,19 @@ UI_SMALL static const char *mi_value(uint32_t i, uint16_t *c)
+         fmt_int(b, flt_reso > 10u ? 10 : flt_reso);
+         return b;
+     }
 +#if FELUCCA_UAC_RX
 +    case MI_RETURN: {
 +        static char b[8];
@@ -2041,10 +2077,10 @@ index a0d96bc..c61381e 100644
      case MI_CPU1:                                     /* the render on both cores (fx.c); live, the sound is the same */
          *c = mi_cpu1_have() ? C_HI : C_DIM;
          return cpu1_off ? "OFF" : "ON";
-@@ -101,6 +158,12 @@ UI_SMALL static void draw_menu(void)
+@@ -112,6 +180,12 @@ UI_SMALL static void draw_menu(void)
                     settings.zoom * 104729u + lights_lvl * 1299709u + lights_keys * 15485863u + ml_count() * 2654435u +
                     lights_notes * 32452843u + usb_full * 49979687u + usb_serial * 86028121u + usb_rate * 15486719u + theme_shown() * 32452867u + theme.crc + cpu1_off * 122949829u +
-                    knob_accel_off * 179424673u;
+                    knob_accel_off * 179424673u + drum_preview * 236887691u + step_adv_off * 373587883u + flt_reso * 512927357u;
 +#if FELUCCA_UAC_RX
 +    sig += uac_rx_gain * 67867967u;
 +#if FELUCCA_CARTRIDGE
@@ -2054,16 +2090,16 @@ index a0d96bc..c61381e 100644
      if (!ui.force && sig == ui.menu_sig)
          return;
      ui.menu_sig = sig;
-@@ -156,7 +219,7 @@ UI_SMALL static void draw_menu(void)
+@@ -167,7 +241,7 @@ UI_SMALL static void draw_menu(void)
                  if (i == sec)
                      cv_rect(x - 2, 3, w + 4, 18, C_LINE);
                  cv_text(x, 4, &FONT_S, MS_NAME[i], i == sec ? C_WHITE : C_DIM);
--                x += w + 10;
-+                x += w + MI_TAB_GAP;
+-                x += w + 6;                         /* (2.7.1: five sections: 6, the last ends at 236) */
++                x += w + MI_TAB_GAP;                /* (2.7.1: five sections: 6, the last ends at 236) */
              }
              for (i = MS_FIRST[sec]; i < MS_FIRST[sec + 1u]; i++) {
                  uint32_t r = i - MS_FIRST[sec];
-@@ -180,14 +243,20 @@ UI_SMALL static void draw_menu(void)
+@@ -191,14 +265,20 @@ UI_SMALL static void draw_menu(void)
                      for (q = 0; q < 5u; q++)
                          cv_rect(xv + 10 + (int32_t)q * 14, y + 28, 10, 10, pal[q]);
                  }
@@ -2084,7 +2120,7 @@ index a0d96bc..c61381e 100644
              }
              if (MS_FIRST[sec + 1u] - MS_FIRST[sec] <= 3u) {   /* (SYSTEM has four rows with 2ND CORE: its fourth
                                                                 * row, ABOUT, takes the help's place) */
-@@ -244,14 +313,17 @@ UI_SMALL static void mi_set(uint32_t i, int32_t s)
+@@ -261,14 +341,17 @@ UI_SMALL static void mi_set(uint32_t i, int32_t s)
          fx_lowcut = (uint8_t)(settings.lowcut != 0);
          break;
      }
@@ -2102,11 +2138,18 @@ index a0d96bc..c61381e 100644
      case MI_RATE:                                      /* (2.7 beta) AUTO 44.1 48: the knob steps (stops at the ends),
                                                          * OCT+ round; at the next start (usb.c usb_rate_mode) */
          if (s > 0 && usb_rate < 2u)
-@@ -261,6 +333,26 @@ UI_SMALL static void mi_set(uint32_t i, int32_t s)
+@@ -278,6 +361,7 @@ UI_SMALL static void mi_set(uint32_t i, int32_t s)
          else if (!s)
              usb_rate = (uint8_t)((usb_rate + 1u) % 3u);
          break;
 +#endif
+     case MI_FRESO:                                     /* (2.7.2) 0 (OFF/clean) .. 10, stops at the ends; OCT+ steps round */
+         if (s > 0 && flt_reso < 10u)
+             flt_reso++;
+@@ -286,6 +370,25 @@ UI_SMALL static void mi_set(uint32_t i, int32_t s)
+         else if (!s)
+             flt_reso = (uint8_t)((flt_reso >= 10u ? 0u : flt_reso + 1u));
+         break;
 +#if FELUCCA_UAC_RX
 +    case MI_RETURN: {
 +        static uint8_t before = 128;                    /* OCT+ unmutes to the level it muted */
@@ -2130,10 +2173,10 @@ index a0d96bc..c61381e 100644
          cpu1_off = (uint8_t)(s > 0 ? 0u : s < 0 ? 1u : !cpu1_off);
          cpu1_units = cpu1_off ? 0 : -1;
 diff --git a/firmware/src/ui_studio.c b/firmware/src/ui_studio.c
-index d5ef0ec..14b85cf 100644
+index cec769e..c5fb15d 100644
 --- a/firmware/src/ui_studio.c
 +++ b/firmware/src/ui_studio.c
-@@ -209,8 +209,15 @@ UI_SMALL static void studio_tracks_draw(void)
+@@ -249,8 +249,15 @@ UI_SMALL static void studio_tracks_draw(void)
              str_cpy(b, DRUM_KIT_NAMES[drum_kit()], sizeof b);
              te_lower(e, "drums", sizeof e);
          } else {
@@ -2150,7 +2193,7 @@ index d5ef0ec..14b85cf 100644
          b[13] = 0;
          h = studio_hash(selected + level * 7u + silent * 997u + rec * 1999u + solo * 4999u + len * 37u +
 diff --git a/firmware/src/usb.c b/firmware/src/usb.c
-index 0615acf..3ed17aa 100644
+index d9a0db8..6e78fe7 100644
 --- a/firmware/src/usb.c
 +++ b/firmware/src/usb.c
 @@ -19,13 +19,18 @@
@@ -2203,10 +2246,10 @@ index 0615acf..3ed17aa 100644
  } usb;
  
  #if FELUCCA_OTA
-@@ -159,46 +181,79 @@ static volatile uint32_t so_w, so_r;
- #define MQ 64u
- static uint32_t midi_in_q[MQ], midi_out_q[MQ];
+@@ -161,53 +183,89 @@ static uint32_t midi_in_q[MQ], midi_out_q[MQ];
  static volatile uint32_t mi_w, mi_r, mo_w, mo_r;
+ static volatile uint8_t midi_in_lost;               /* (2.8.3) a note message did not fit: seq.c ends the MIDI notes held
+                                                      * (a lost note-off must not leave a note stuck; after Melodee 1.5) */
 +#if FELUCCA_CARTRIDGE
 +static uint16_t mo_lost;                           /* channels with a note-off dropped on a full ring (audio ISR only) */
 +#endif
@@ -2241,9 +2284,13 @@ index 0615acf..3ed17aa 100644
  
  /* ------------------------------------------------------- descriptors --- */
  /* interfaces: 0 audio control, 1 MIDI streaming, 2 audio streaming (FELUCCA_UAC), then CDC's two.
-  * bcdDevice: 3.00 MIDI, +0.01 CDC, +0.10 the audio input, +0.20 more with 48 kHz (2.5) (hosts cache descriptors
-  * per version) */
+  * bcdDevice: 3.00 MIDI, +0.01 CDC, +0.10 the audio input, +0.20 more with 48 kHz (2.5), +0.08 the audio
+- * streaming interface first in the AC collection (2.7.2, UAC_BCD_AS) (hosts cache descriptors per version) */
+-#define UAC_BCD_AS (0x08 * FELUCCA_UAC)
 -#define CDC_IF (2 + FELUCCA_UAC)
++ * streaming interface first in the AC collection (2.7.2, UAC_BCD_AS) (hosts cache descriptors per version);
++ * the USB playback (FELUCCA_UAC_RX) has a major version of its own, 4.xx, and its streaming interface is first too */
++#define UAC_BCD_AS (0x08 * (FELUCCA_UAC | FELUCCA_UAC_RX))
 +#define CDC_IF (2 + FELUCCA_UAC + FELUCCA_UAC_RX)
 +#define UAC_RX_IF (2 + FELUCCA_UAC)
  #define UAC_AS_IF 2u
@@ -2253,8 +2300,8 @@ index 0615acf..3ed17aa 100644
 +#define USB_NIF (2 + FELUCCA_UAC + FELUCCA_UAC_RX + 2 * FELUCCA_CDC)
  #if FELUCCA_CDC
  static const uint8_t DEV_DESC[18] = {18, 1, 0x00, 0x02, 0xEF, 0x02, 0x01, 64, 0x09, 0x12, 0x01, 0x00,
--                                     0x01 + 0x10 * (FELUCCA_UAC + FELUCCA_UAC_48K), 0x03, 1, 2, 0, 1};   /* misc/IAD */
-+                                     0x01 + 0x10 * (FELUCCA_UAC + FELUCCA_UAC_48K), 0x03 + FELUCCA_UAC_RX, 1, 2, 0, 1};   /* misc/IAD; RX has its own major version */
+-                                     0x01 + 0x10 * (FELUCCA_UAC + FELUCCA_UAC_48K) + UAC_BCD_AS, 0x03, 1, 2, 0, 1};   /* misc/IAD */
++                                     0x01 + 0x10 * (FELUCCA_UAC + FELUCCA_UAC_48K) + UAC_BCD_AS, 0x03 + FELUCCA_UAC_RX, 1, 2, 0, 1};   /* misc/IAD */
  static const uint8_t CFG_DESC[] = {
      9, 2, CFG_LEN & 0xFF, CFG_LEN >> 8, USB_NIF, 1, 0, 0x80, 50,
 -    8, 0x0B, 0, 2 + FELUCCA_UAC, 1, 1, 0, 0,            /* IAD: audio + MIDI (IF 0-1, 0-2) */
@@ -2264,23 +2311,34 @@ index 0615acf..3ed17aa 100644
  #define FELUCCA_USB_PID 0x0001   /* the update loader is 0x0002 */
  #endif
  static const uint8_t DEV_DESC[18] = {18, 1, 0x10, 0x01, 0, 0, 0, 64, 0x09, 0x12, FELUCCA_USB_PID & 0xFF,
--                                     FELUCCA_USB_PID >> 8, 0x00 + 0x10 * (FELUCCA_UAC + FELUCCA_UAC_48K), 0x03,
-+                                     FELUCCA_USB_PID >> 8, 0x00 + 0x10 * (FELUCCA_UAC + FELUCCA_UAC_48K), 0x03 + FELUCCA_UAC_RX,
+-                                     FELUCCA_USB_PID >> 8, 0x00 + 0x10 * (FELUCCA_UAC + FELUCCA_UAC_48K) + UAC_BCD_AS, 0x03,
++                                     FELUCCA_USB_PID >> 8, 0x00 + 0x10 * (FELUCCA_UAC + FELUCCA_UAC_48K) + UAC_BCD_AS, 0x03 + FELUCCA_UAC_RX,
                                       1, 2, 0, 1};
  static const uint8_t CFG_DESC[] = {
      9, 2, CFG_LEN & 0xFF, CFG_LEN >> 8, USB_NIF, 1, 0, 0x80, 50,
  #endif
      9, 4, 0, 0, 0, 1, 1, 0, 0,
+-#if FELUCCA_UAC
+-    /* AC header 1.00, its collection: the audio streaming interface first, then the MIDI one (2.7.2, after
++    /* AC header 1.00, its collection: the audio streaming interfaces first, then the MIDI one (2.7.2, after
+      * Felucca 1.5.1, #67). macOS up to 15 (the kernel's AppleUSBAudio, parseConfigurationDescriptor) drops the
+      * MIDI streaming interface from the collection while it walks it with bInCollection's count: MIDI listed
+      * first, the walk runs past the shortened list and gives up before the audio streaming interface, and no
+      * audio input appears (MIDI still works). Listed last, MIDI is dropped at the end. The class spec gives the
+-     * order no meaning (Windows, Linux, macOS 26 take each listed interface on its own) */
+-    10, 0x24, 1, 0x00, 0x01, 31, 0, 2, UAC_AS_IF, 1,
++     * order no meaning (Windows, Linux, macOS 26 take each listed interface on its own). Without RX these are
++     * upstream's bytes: 10 ... 2, UAC_AS_IF, 1 with the audio input, 9 ... 1, 1 without */
 +    9 + FELUCCA_UAC + FELUCCA_UAC_RX, 0x24, 1, 0x00, 0x01,
-+    9 + 22 * (FELUCCA_UAC + FELUCCA_UAC_RX), 0, 1 + FELUCCA_UAC + FELUCCA_UAC_RX, 1,
++    9 + 22 * (FELUCCA_UAC + FELUCCA_UAC_RX), 0, 1 + FELUCCA_UAC + FELUCCA_UAC_RX,
 +#if FELUCCA_UAC
 +    UAC_AS_IF,
 +#endif
 +#if FELUCCA_UAC_RX
 +    UAC_RX_IF,
 +#endif
- #if FELUCCA_UAC
--    10, 0x24, 1, 0x00, 0x01, 31, 0, 2, 1, UAC_AS_IF,    /* AC header 1.00: MIDI + audio streaming */
++    1,
++#if FELUCCA_UAC
      12, 0x24, 2, 1, 0x03, 0x06, 0, 2, 0x03, 0x00, 0, 0, /* input terminal 1: line, 2 ch (L R) */
      9, 0x24, 3, 2, 0x01, 0x01, 0, 1, 0,                 /* output terminal 2: USB streaming, from 1 */
 -#else
@@ -2292,7 +2350,7 @@ index 0615acf..3ed17aa 100644
  #endif
      9, 4, 1, 0, 2, 1, 3, 0, 0,
      7, 0x24, 1, 0x00, 0x01, 0x41, 0x00,
-@@ -223,6 +278,14 @@ static const uint8_t CFG_DESC[] = {
+@@ -232,6 +290,14 @@ static const uint8_t CFG_DESC[] = {
      9, 5, 0x84, 0x05, UAC_MAXP & 0xFF, UAC_MAXP >> 8, 1, 0, 0,   /* EP4 IN isochronous async, 1 ms */
      7, 0x25, 1, 0x01, 0, 0, 0,                          /* CS endpoint: sampling frequency control */
  #endif
@@ -2307,16 +2365,16 @@ index 0615acf..3ed17aa 100644
  #if FELUCCA_CDC
      8, 0x0B, CDC_IF, 2, 2, 2, 1, 0,                     /* IAD: CDC ACM (IF 2-3, 3-4) */
      9, 4, CDC_IF, 0, 1, 2, 2, 1, 0,                     /* communication */
-@@ -246,7 +309,7 @@ typedef char cfg_len_ok[sizeof CFG_DESC == CFG_LEN ? 1 : -1];
+@@ -255,7 +321,7 @@ typedef char cfg_len_ok[sizeof CFG_DESC == CFG_LEN ? 1 : -1];
   * are loaded first), so the host sees one device from the start */
  static uint8_t usb_cdc_on;
  static const uint8_t DEV_DESC_PLAIN[18] = {18, 1, 0x10, 0x01, 0, 0, 0, 64, 0x09, 0x12, 0x01, 0x00,
--                                           0x00 + 0x10 * (FELUCCA_UAC + FELUCCA_UAC_48K), 0x03, 1, 2, 0, 1};
-+                                           0x00 + 0x10 * (FELUCCA_UAC + FELUCCA_UAC_48K), 0x03 + FELUCCA_UAC_RX, 1, 2, 0, 1};
+-                                           0x00 + 0x10 * (FELUCCA_UAC + FELUCCA_UAC_48K) + UAC_BCD_AS, 0x03, 1, 2, 0, 1};
++                                           0x00 + 0x10 * (FELUCCA_UAC + FELUCCA_UAC_48K) + UAC_BCD_AS, 0x03 + FELUCCA_UAC_RX, 1, 2, 0, 1};
  #define CFG_PLAIN_LEN (CFG_LEN - 74)                    /* without the audio IAD (8) and the CDC block (66) */
  static uint8_t cfg_plain[CFG_PLAIN_LEN];
  static const uint8_t *cfg_plain_get(void)
-@@ -453,6 +516,80 @@ static void uac_rate_set(uint32_t hz)
+@@ -463,6 +529,80 @@ static void uac_rate_set(uint32_t hz)
  }
  #endif
  
@@ -2397,7 +2455,7 @@ index 0615acf..3ed17aa 100644
  static void ep1_config(void)
  {
      fm1_usb_ep_txbuf(1, ep1tx);
-@@ -493,6 +630,11 @@ static void ep1_config(void)
+@@ -503,6 +643,11 @@ static void ep1_config(void)
      fm1_usb_ep_enable(1u << 4);
      uac_stream(0);
  #endif
@@ -2409,7 +2467,7 @@ index 0615acf..3ed17aa 100644
  }
  
  static void e0_chunk(void)
-@@ -546,6 +688,9 @@ static void ep0_service(void)
+@@ -556,6 +701,9 @@ static void ep0_service(void)
  #endif
  #if FELUCCA_UAC
          uac.e0_rx = 0;
@@ -2419,7 +2477,7 @@ index 0615acf..3ed17aa 100644
  #endif
          return;
      }
-@@ -557,6 +702,9 @@ static void ep0_service(void)
+@@ -567,6 +715,9 @@ static void ep0_service(void)
  #endif
  #if FELUCCA_UAC
          uac.e0_rx = 0;
@@ -2429,7 +2487,7 @@ index 0615acf..3ed17aa 100644
  #endif
      }
      if (usb.e0_tx) {
-@@ -576,6 +724,18 @@ static void ep0_service(void)
+@@ -586,6 +737,18 @@ static void ep0_service(void)
          goto ack;
      }
  #endif
@@ -2448,7 +2506,7 @@ index 0615acf..3ed17aa 100644
  #if FELUCCA_UAC
      if (uac.e0_rx) {                                    /* SET_CUR sampling frequency: 3 bytes, Hz */
          uac.rate_sets++;
-@@ -585,6 +745,8 @@ static void ep0_service(void)
+@@ -595,6 +758,8 @@ static void ep0_service(void)
          goto ack;
      }
  #endif
@@ -2457,7 +2515,7 @@ index 0615acf..3ed17aa 100644
      for (i = 0; i < 8u; i++)
          s[i] = ep0buf[i];
      usb.setups++;
-@@ -607,7 +769,7 @@ static void ep0_service(void)
+@@ -617,7 +782,7 @@ static void ep0_service(void)
          goto stall;
      }
      case 0x0009:                                        /* SET_CONFIGURATION: 0 or 1 only */
@@ -2466,7 +2524,7 @@ index 0615acf..3ed17aa 100644
              goto stall;
          usb.config = s[2];
          if (usb.config == 1u)
-@@ -618,6 +780,12 @@ static void ep0_service(void)
+@@ -628,6 +793,12 @@ static void ep0_service(void)
          if (usb.config != 1u)
              uac_stream(0);
          uac_rate_set(UAC_RATE);                         /* a new configuration starts at 44.1 */
@@ -2479,7 +2537,7 @@ index 0615acf..3ed17aa 100644
  #endif
          goto ack;
      case 0x8008:
-@@ -628,7 +796,16 @@ static void ep0_service(void)
+@@ -638,7 +809,16 @@ static void ep0_service(void)
      case 0x8200:
          e0_send(zero2, 2, wlength);
          return;
@@ -2497,7 +2555,7 @@ index 0615acf..3ed17aa 100644
  #if FELUCCA_UAC
          if (s[4] == UAC_AS_IF && wvalue <= 1u && usb.config) {
              uac_ep4_reset();
-@@ -640,6 +817,14 @@ static void ep0_service(void)
+@@ -650,6 +830,14 @@ static void ep0_service(void)
              goto ack;
          goto stall;
      case 0x810A:
@@ -2512,7 +2570,7 @@ index 0615acf..3ed17aa 100644
  #if FELUCCA_UAC
          if (s[4] == UAC_AS_IF) {
              static uint8_t alt;
-@@ -656,11 +841,15 @@ static void ep0_service(void)
+@@ -666,11 +854,15 @@ static void ep0_service(void)
  #else
          uint32_t ep = s[4] & 0x0Fu, last = 1u;
  #endif
@@ -2529,7 +2587,7 @@ index 0615acf..3ed17aa 100644
              goto stall;                                 /* not an endpoint we have */
          if (ep) {                                       /* (EP0 has no halt to clear) */
              sie_wr(S_INDEX, ep);
-@@ -689,36 +878,60 @@ static void ep0_service(void)
+@@ -699,36 +891,60 @@ static void ep0_service(void)
      case 0x2123:                                        /* SEND_BREAK */
          goto ack;
  #endif
@@ -2604,7 +2662,7 @@ index 0615acf..3ed17aa 100644
      }
  #endif
      default:
-@@ -1284,6 +1497,10 @@ static void usb_poll(void)                              /* TIMER5 ISR, 2 kHz */
+@@ -1296,6 +1512,10 @@ static void usb_poll(void)                              /* TIMER5 ISR, 2 kHz */
          uac.e0_rx = 0;
          uac_stream(0);
          uac_rate_set(UAC_RATE);
@@ -2615,7 +2673,7 @@ index 0615acf..3ed17aa 100644
  #endif
          fm1_usb_ep0_buf(ep0buf);
          sie_wr(S_INTRUSBE, 0x07);
-@@ -1311,11 +1528,17 @@ static void usb_poll(void)                              /* TIMER5 ISR, 2 kHz */
+@@ -1323,11 +1543,17 @@ static void usb_poll(void)                              /* TIMER5 ISR, 2 kHz */
  #if FELUCCA_UAC
      uac_service();
  #endif
@@ -2633,7 +2691,7 @@ index 0615acf..3ed17aa 100644
      fm1_usb_reset();                                    /* reset whatever the ROM left */
      fm1_delay_ms(25);
      fm1_usb_attach(ep0buf);
-@@ -1345,6 +1568,9 @@ static void usb_retry(uint32_t now_ms)
+@@ -1357,6 +1583,9 @@ static void usb_retry(uint32_t now_ms)
  static void usb_detach(void)
  {
      usb.detached = 1;
@@ -2644,10 +2702,10 @@ index 0615acf..3ed17aa 100644
      fm1_usb_off();
  }
 diff --git a/firmware/src/voice.c b/firmware/src/voice.c
-index 3c67dc3..ede4b42 100644
+index 530ce2f..1c65b89 100644
 --- a/firmware/src/voice.c
 +++ b/firmware/src/voice.c
-@@ -393,6 +393,10 @@ static volatile uint32_t note_hits[NPART][4];
+@@ -453,6 +453,10 @@ static volatile uint32_t note_hits[NPART][4];
  /* the visualiser (ui_vis.c): the tracks a note started on (bit per track), each one's last note, a kick */
  static volatile uint8_t vis_hit, vis_kick_hit, vis_note[NTRK];
  
@@ -2658,7 +2716,7 @@ index 3c67dc3..ede4b42 100644
  static void trk_note_on(track_t *t, uint32_t note, uint32_t vel)
  {
      uint32_t any = 0, i, mode = (uint32_t)t->p[P_VOICE];
-@@ -408,6 +412,12 @@ static void trk_note_on(track_t *t, uint32_t note, uint32_t vel)
+@@ -468,6 +472,12 @@ static void trk_note_on(track_t *t, uint32_t note, uint32_t vel)
      }
      if ((uint32_t)(t - trk) < NPART && note < 128u)
          note_hits[t - trk][note >> 5] |= 1u << (note & 31u);
@@ -2671,7 +2729,7 @@ index 3c67dc3..ede4b42 100644
      if (t->xf_on || t->eng_req != t->engine || t->pold) {   /* engine switch / preset under way: after the fade */
          for (i = 0; i < t->xp_n && t->xp_note[i] != note; i++)
              ;
-@@ -467,6 +477,12 @@ static void trk_note_off(track_t *t, uint32_t note)
+@@ -527,6 +537,12 @@ static void trk_note_off(track_t *t, uint32_t note)
      if (is_drum(t))
          return;                                         /* one-shots */
      strum_cancel(t, note, 0);
@@ -2684,7 +2742,7 @@ index 3c67dc3..ede4b42 100644
      for (i = 0; i < t->xp_n; i++)                       /* not sounding yet (engine switch): forget it */
          if (t->xp_note[i] != note) {
              t->xp_note[k] = t->xp_note[i];
-@@ -503,6 +519,10 @@ static void trk_all_off(track_t *t)
+@@ -566,6 +582,10 @@ static void trk_all_off(track_t *t)
  {
      uint32_t i;
      strum_cancel(t, 0, 1);
@@ -2770,10 +2828,10 @@ index 0000000..296c45b
 +}
 diff --git a/tests/cartridge_ui_test.c b/tests/cartridge_ui_test.c
 new file mode 100644
-index 0000000..cdf9885
+index 0000000..c2066ac
 --- /dev/null
 +++ b/tests/cartridge_ui_test.c
-@@ -0,0 +1,574 @@
+@@ -0,0 +1,588 @@
 +/* SPDX-License-Identifier: GPL-3.0-only */
 +#include <stdint.h>
 +#define FELUCCA_CARTRIDGE 1
@@ -3036,9 +3094,11 @@ index 0000000..cdf9885
 +    uint32_t i, sent;
 +    set_cart_channel(0); frame();
 +    mo_r = mo_w;
++    trk[0].v[0].pend = VP_ON; trk[0].v[0].pend_note = 64; trk[0].v[0].pend_vel = 90;   /* a sample's note waiting */
 +    set_cart_channel(1); frame();
 +    check(cart_tracks == 1u && midi_seen(0xB0, 123) == 1,
 +          "a track the cartridge takes: an All Notes Off on its channel ends the keys' plain notes");
++    check(!trk[0].v[0].pend, "and a note its engine had waiting for a voice's fade is dropped (it would sound later)");
 +    mo_r = mo_w;
 +    trk_note_on(&trk[0], 68, 90);
 +    trk[0].pold = 1; panic_req |= 1u; frame(); trk[0].pold = 0;
@@ -3049,6 +3109,16 @@ index 0000000..cdf9885
 +    check(mo_lost == 1u, "a note-off lost on a full ring is remembered");
 +    mo_r = mo_w; frame();
 +    check(midi_seen(0xB0, 123) == 1 && !mo_lost, "then an All Notes Off on that channel ends it");
++    {   /* (2.8.3) a note message lost on the MIDI input ring: the notes MIDI held end, on the cartridge too */
++        uint8_t route = (uint8_t)song.g[G_ROUTE];
++        song.g[G_ROUTE] = 0;                            /* (MIDI in by channel) */
++        mo_r = mo_w;
++        midi_in_event(0x09u | (0x90u | trk_midi_ch(0)) << 8 | 76u << 16 | 100u << 24); frame();
++        check(midi_seen(0x90, 76) == 1 && !voices_on(&trk[0]), "a MIDI note in on the cartridge track goes to the cartridge");
++        mo_r = mo_w; midi_in_lost = 1; frame();
++        check(midi_seen(0x80, 76) == 1, "a note message lost on the MIDI input: the note MIDI held ends on the cartridge");
++        song.g[G_ROUTE] = route;
++    }
 +    trk_note_on(&trk[0], 72, 90);
 +    check(!cart_quiet(), "autosave waits while a cartridge track holds a note");
 +    trk_note_off(&trk[0], 72); frame();
@@ -3153,7 +3223,9 @@ index 0000000..cdf9885
 +    check(uar_track_q12 == 0u, "LEVEL 0 mutes the return, as the track shows");
 +    trk[0].p[P_LEVEL] = 127; cart_tracks_block();
 +    check(uar_track_q12 > 4096u && uar_track_q12 < 4u * 4096u, "LEVEL up: the return louder, as a track's");
-+    trk[0].p[P_LEVEL] = TP[P_LEVEL].def; trk[0].p[P_MUTE] = 1; cart_tracks_block();
++    trk[0].p[P_LEVEL] = TP[P_LEVEL].def; ex_off[0] = 127u - 64u; cart_tracks_block();
++    check(uar_track_q12 > 900u && uar_track_q12 < 1150u, "MIDI EXPRESSION 64: the return about 12 dB down, as a track's");
++    ex_off[0] = 0; trk[0].p[P_MUTE] = 1; cart_tracks_block();
 +    check(uar_track_q12 == 0u, "MUTE mutes the return");
 +    trk[0].p[P_MUTE] = 0; trk[0].peak = 0; uar_peak = 5000; cart_tracks_block();
 +    check(uar_track_q12 == 4096u && trk[0].peak >= 5000 && !uar_peak, "the track's meter reads the return");
@@ -3349,7 +3421,7 @@ index 0000000..cdf9885
 +}
 +#endif
 diff --git a/tests/hostsim.c b/tests/hostsim.c
-index 2b6e9dc..170f8c0 100644
+index f230de8..bba084f 100644
 --- a/tests/hostsim.c
 +++ b/tests/hostsim.c
 @@ -43,6 +43,12 @@ static void fm1_irq_on(void) {}
@@ -4071,10 +4143,10 @@ index 0000000..8cd7e97
 +}
 diff --git a/tests/uac_rx_usb_test.c b/tests/uac_rx_usb_test.c
 new file mode 100644
-index 0000000..622b04b
+index 0000000..7b8ffd6
 --- /dev/null
 +++ b/tests/uac_rx_usb_test.c
-@@ -0,0 +1,252 @@
+@@ -0,0 +1,254 @@
 +/* SPDX-License-Identifier: GPL-3.0-only
 + * Cartridge return: real usb.c against an indexed-SIE/DMA fake. No silicon
 + * behavior, acoustic output or DMA timing is asserted by this host test. */
@@ -4174,6 +4246,7 @@ index 0000000..622b04b
 +#endif
 +    CHECK(get_desc(0x100, &d, &dn)); CHECK(get_desc(0x200, &c, &n));
 +    CHECK(dn == 18 && d[13] == 3 + T_RX);
++    CHECK((d[12] & 15u) == 8u * (T_CAPTURE || T_RX) + (T_CDC == 1));   /* +0.08: that collection order */
 +    CHECK(n == le16(c+2)); CHECK(c[4] == 2 + T_CAPTURE + T_RX + 2*(T_CDC == 1));
 +    if (getenv("UAC_DUMP")) {
 +        for (uint32_t i=0;i<dn;i++) printf("%02X",d[i]); puts("");
@@ -4194,8 +4267,9 @@ index 0000000..622b04b
 +            if (p[2] == 1) {
 +                aclen=le16(p+5);
 +                CHECK(p[0] == 9 + T_CAPTURE + T_RX && p[7] == 1 + T_CAPTURE + T_RX);
-+                CHECK(p[8] == 1);
-+                for (uint32_t i=0;i<(uint32_t)(T_CAPTURE+T_RX);i++) CHECK(p[9+i] == 2+i);
++                /* the audio streaming interfaces first, MIDI last (macOS up to 15 drops MIDI while it walks) */
++                for (uint32_t i=0;i<(uint32_t)(T_CAPTURE+T_RX);i++) CHECK(p[8+i] == 2+i);
++                CHECK(p[8+T_CAPTURE+T_RX] == 1);
 +            }
 +            if (p[2] == 2 && p[3] == 3) { terminal3++; CHECK(le16(p+4)==0x101 && p[7]==2 && le16(p+8)==3); }
 +            if (p[2] == 3 && p[3] == 4) { terminal4++; CHECK(le16(p+4)==0x301 && p[7]==3); }
@@ -4328,7 +4402,7 @@ index 0000000..622b04b
 +    return failures!=0;
 +}
 diff --git a/tests/ui_pages_test.c b/tests/ui_pages_test.c
-index 9252ce9..84d5022 100644
+index 086d8fe..f41129b 100644
 --- a/tests/ui_pages_test.c
 +++ b/tests/ui_pages_test.c
 @@ -24,12 +24,13 @@
@@ -4347,7 +4421,7 @@ index 9252ce9..84d5022 100644
  static int32_t encs[7];
  static uint32_t fm1_ticks(void) { return fm1_ms * 1000u * 24u; }
  #define FM1_TICKS_PER_US 24u
-@@ -45,7 +46,7 @@ static uint32_t fm1_input_note_edges(void) { uint32_t e = fm1_in.notes & ~notes_
+@@ -47,7 +48,7 @@ static uint32_t fm1_input_note_edges(void) { uint32_t e = fm1_in.notes & ~notes_
  static uint32_t wdt_tick_ms;                       /* (stress_test: 1, the blocking PANEL setup's clock runs out) */
  static void fm1_wdt_feed(void) { fm1_ms += wdt_tick_ms; }
  static int32_t fm1_adc_read(int c) { (void)c; return -1; }
@@ -4435,7 +4509,7 @@ index d4da9f2..0f1e990 100644
 +  the sample slots' SMP_WRITE answers rc 5 and SMP_END rc 7, whose rc 3 means a write or CRC
 +  failure): a flash erase silences the audio for about 50 ms.
 diff --git a/web/editor.html b/web/editor.html
-index ad9b46b..6141003 100644
+index 1086c9c..095890c 100644
 --- a/web/editor.html
 +++ b/web/editor.html
 @@ -2505,20 +2505,20 @@ async function backupRestore(rq, file, progress = () => {}) {
@@ -4463,7 +4537,7 @@ index ad9b46b..6141003 100644
    }
    return true;
  }
-@@ -4718,6 +4718,7 @@ const TEXT = {
+@@ -4719,6 +4719,7 @@ const TEXT = {
      chopHint: "スペース: 再生中に TAP（停止中は再生/停止）· 1–9 0: 試聴 · ダブルクリック: 追加 · ドラッグ: 移動 · ← →: 微調整 · K: 使う/外す · 下のつまみ: 長さ · Del: 削除 · ホイール: ズーム",
      smpTooBig: "大きすぎます", smpDecodeFail: "読み込めません: ", smpUploading: "書き込み中 USR", smpDone: "書き込みました USR",
      smpFail: "サンプルの書き込みに失敗しました: ", smpErased: "消去しました USR",
@@ -4471,7 +4545,7 @@ index ad9b46b..6141003 100644
      confirmErase: "USR{n} を消去しますか？", confirmUpload: "USR{n} に書き込みますか？ 今の内容は消えます。",
      layout: "（ファームウェアのパラメーター数が想定と違うため、簡易表示にしています）",
      ctlHelp: "スライダーはクリックしてからホイールか矢印キーで微調整（Shift で 10 ずつ）、ダブルクリックで初期値。",
-@@ -5055,6 +5056,7 @@ const TEXT = {
+@@ -5056,6 +5057,7 @@ const TEXT = {
      chopHint: "space: TAP while it plays (play/stop when stopped) · 1–9 0: listen · double-click: add · drag: move · ← →: nudge · K: keep / leave out · bottom handle: length · Del: remove · wheel: zoom",
      smpTooBig: "too large", smpDecodeFail: "Cannot read: ", smpUploading: "Uploading USR", smpDone: "Uploaded USR",
      smpFail: "Sample upload failed: ", smpErased: "Erased USR",
@@ -4479,7 +4553,7 @@ index ad9b46b..6141003 100644
      confirmErase: "Erase USR{n}?", confirmUpload: "Write to USR{n}? Its current contents will be replaced.",
      layout: "(The firmware has a different parameter count; showing a plain list.)",
      ctlHelp: "Sliders: click, then fine-tune with the wheel or arrow keys (Shift: steps of 10); double-click resets.",
-@@ -7672,7 +7674,10 @@ $("clearseq").addEventListener("click", async () => {
+@@ -7673,7 +7675,10 @@ $("clearseq").addEventListener("click", async () => {
  /* ---------------------------------------------------------- samples --- */
  const smpDraft = [0, 1, 2, 3].map(() => ({ name: "", files: [] }));   /* USR1..USR4 */
  let smpBusy = false;
@@ -4491,7 +4565,7 @@ index ad9b46b..6141003 100644
  const kib = (n) => (n / 1024).toFixed(1);
  
  /* auto key split, as in buildSlot (for the preview) */
-@@ -8229,7 +8234,7 @@ async function kitSend() {
+@@ -8230,7 +8235,7 @@ async function kitSend() {
      const k = ks[j];
      if (!parts[j].length) {
        busy++;
@@ -4500,7 +4574,7 @@ index ad9b46b..6141003 100644
        catch (e) { done = false; report(e); } finally { busy--; }
        continue;
      }
-@@ -8278,16 +8283,16 @@ async function smpUpload(k, prog, ask = true, d = smpDraft[k]) {   /* (d: the DR
+@@ -8279,16 +8284,16 @@ async function smpUpload(k, prog, ask = true, d = smpDraft[k]) {   /* (d: the DR
    try {
      const t0 = performance.now();
      let r = parse[CMD.SMP_BEGIN](await rq(req.smpBegin(k), { timeout: 1000, retries: 0 }));
@@ -4520,7 +4594,7 @@ index ad9b46b..6141003 100644
      sayK("smpDone", `${k + 1}  ${((performance.now() - t0) / 1000).toFixed(1)} s`);
      done = true;
    } catch (e) {
-@@ -8309,7 +8314,7 @@ async function smpErase(k) {
+@@ -8310,7 +8315,7 @@ async function smpErase(k) {
    renderSamples();
    try {
      const r = parse[CMD.SMP_ERASE](await rq(req.smpErase(k), { timeout: 2500, retries: 0 }));

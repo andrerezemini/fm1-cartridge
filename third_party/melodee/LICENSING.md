@@ -22,7 +22,7 @@ Every file in this tree that carries an `SPDX-License-Identifier: GPL-3.0-only` 
 
 - the firmware: `firmware/` (app, HAL, update loader)
 - the build script and tools: `build.sh`, `tools/`
-- the web pages (installer, editor) and their tests: `web/` (not the Fukiai font, below)
+- the web pages (installer, editor) and their tests: `web/` (apart from the MPL installer ports and Fukiai font below)
 - the host tests: `tests/`
 
 Three source files are ports and keep the licence of their originals: `firmware/src/phys_dsp.c`
@@ -51,6 +51,9 @@ Melodee's additions and modifications are credited separately in the source file
 
 | What | Licence | Where |
 | --- | --- | --- |
+| SLOOP master punch, stereo reverb/freeze and pedal-effect adaptations by isod89, from `isod89/sloop-fm1` at `4ec1ac829fd2bdf2c571ea215fb3d62477d01220`. Retained Felucca filters, input diffusers and insert portions keep Leo Kuroshita / Hügelton Instruments' notices; Melodee's integration retains its own credit. | GPL-3.0-only | `firmware/src/punch.c`, `fx_sloop_reverb.h`, `fx_sloop_insert.h`; source history and attribution in `docs/SLOOP_PUNCH_FX.md` |
+| Saadet installer protections and presentation, from `keremimo/saadet` at `f358c01` (introduced in `036b97e`): worker timers, tab/wake locks, timestamped MIDI responses, progress accounting, simulated FM-1 and styles. Original notices identify Kerem Kilic and the retained Charles Vestal / Leo Kuroshita portions. Melodee's session controller and integration are new GPL-3.0-only code. | MPL-2.0 for the ported files | `web/install/keepalive.js`, `transfer.js`, `progress.js`, `fakefm1.js`, `installer.css`, `installer.js`, the MPL portions of `web/index_pkg.html`; `LICENSES/MPL-2.0.txt` |
+| m-bootloader v1.2 by Julius Vitkauskas, source `22e2559906f9fc4e077f2d6aee20bf332300439e`: unmodified FM-1 release assets, offered separately and optionally by the web installer. | MIT | `web/m-bootloader/`, `LICENSES/MIT-m-bootloader.txt`; the full notice is published beside the bootloader |
 | ChoralRoot FM-1 contributors (<https://github.com/Quixotic7/ChoralRootFM1>, v0.16, commit `9c7445cdd7b767c779741d28654fb59cca3acd97`): boot stub, interrupted-update write ordering, commit-marker/CRC compensation, and recovery tests, adapted for Melodee. The shared `CRSTUB` / `CRBM` format is retained. | GPL-3.0-only | `firmware/stub/`, `firmware/loader/ldr_core.c`, `tools/build.py`, `tools/fm1pkg_make.py`, `tests/boot_stub*`, `tests/loader_powercut_test.c` |
 | Rubik font by The Rubik Project Authors (<https://github.com/googlefonts/rubik>): the UI text and the keycap labels, rasterised into the firmware at build time (`tools/gen_aa_font.py`, `tools/gen_aa_keycaps.py`; the generated tables are not offered as a font, and the font declares no Reserved Font Name) | SIL OFL 1.1 | `assets/fonts/Rubik[wght].ttf`, `LICENSES/OFL-Rubik.txt` |
 | Inter Tight font by The Inter Project Authors: the panel diagram (`tools/gen_panel_diagram.py`, `docs/panel.jpg`) and the `inter-tight` preset of `tools/gen_aa_font.py` (the firmware's text was Inter Tight up to Melodee 0.13) | SIL OFL 1.1 | `assets/fonts/InterTight[wght].ttf`, `LICENSES/OFL-InterTight.txt` (also `assets/fonts/OFL.txt`) |

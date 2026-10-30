@@ -1,7 +1,7 @@
 # Cartridge USB return
 
-This tree is Sloop 2.7.1 (`https://github.com/isod89/sloop-fm1.git`, revision
-`4ec1ac829fd2bdf2c571ea215fb3d62477d01220`) with the cartridge profile: USB audio playback into
+This tree is Sloop 2.8.4 (`https://github.com/isod89/sloop-fm1.git`, revision
+`91f30182d9095e0ecdb43396554f2ce5a67df179`) with the cartridge profile: USB audio playback into
 the FM-1, the CARTRIDGE page that controls the cartridge, and the FM-1 charger control. The code
 and the native tests cover the software side; enumeration, physical audio, power, processor load
 and latency on the FM-1 are measured on the bench.
@@ -19,18 +19,23 @@ master and limiter. The regular build (`sh build.sh`) keeps RX off. See
 [build and tests](CARTRIDGE_BUILD.md).
 
 The return endpoint is **0x04 OUT**, adaptive isochronous, at most 180 bytes per 1 ms packet.
-The interface is `2 + FELUCCA_UAC`; the host discovers it from the descriptors. The format is
+The interface is `2 + FELUCCA_UAC`; the host discovers it from the descriptors. As upstream does
+for its audio input, the AudioControl header lists the audio streaming interfaces first and MIDI
+last (macOS up to 15 drops the MIDI interface from the list while walking it and would miss the
+streaming interface listed after it), and bcdDevice reads 4.08 (4.xx: playback; +0.08 that order,
+so a host that cached older descriptors reads them again). The format is
 PCM signed 16-bit little-endian, two channels, 44,100 Hz. There is no feedback endpoint and no
 48 kHz playback rate; the rate controls accept only 44,100. MIDI stays on 0x01/0x81.
 
 The experimental profile with capture uses 0x84 IN and 0x04 OUT at the same time. Its
-descriptors and EP0 are exercised in simulation only; duplex operation on the physical
-controller, and whether each such profile fits in the application slot, are not established.
-Use the dedicated profile.
+descriptors and EP0 are exercised in simulation only, and duplex operation on the physical
+controller is not established; the cartridge build with capture as well (`FELUCCA_UAC=1`) fits
+the application slot with 772 B free. Use the dedicated profile.
 
 ## Controls on the FM-1
 
-1. In the menu opened by HOME, use SELECT to reach the **USB** section.
+1. In the menu opened by HOME, use SELECT to reach the **USB** section (SCREEN, LIGHTS, AUDIO,
+   SEQ, USB, SYS: with six sections the SYSTEM tab reads SYS so that they fit the screen).
 2. **KNOB 1 / USB RETURN** sets the gain from OFF to 100%.
 3. **OCT+** mutes, and pressed again brings back the level it had. The state is RAM-only:
    restarting restores 100%.
@@ -56,7 +61,12 @@ track's channel when the cartridge takes the track (its keys' plain notes may be
 and the notes sent are ended when it gives it back or the track is muted. A note-off dropped by a
 full MIDI OUT ring (`usb.c` `midi_out_event`) is followed by an All Notes Off on its channel once
 there is room. The same block sets the return's level from the cartridge track's LEVEL (its default
-is unity) and MUTE, and feeds the track's meter with the return's peak. The cartridge's polyphony
+is unity), MIDI EXPRESSION (CC 11, as on any track) and MUTE, and feeds the track's meter with the
+return's peak; a sample's note its engine had waiting for a voice's fade is dropped at the takeover.
+The notes a player holds on the cartridge track behave as on any track: the sequencer neither
+restarts nor ends them, and a note-off lost on a full MIDI input ring ends the notes MIDI held,
+which then end on the cartridge too. A MIDI Program Change (with its Bank Select) received for the
+cartridge track changes the track's own, silent sound, not the cartridge's preset. The cartridge's polyphony
 depends on the firmware it runs. Sloop's knobs do not send CC. While the cartridge answers, CLOCK
 OUT runs even at OFF (`seq.c` `clkout_block`), unless SYNC follows an external clock.
 `cart_quiet` holds the autosave and the section saves, whose flash erase runs with the interrupts

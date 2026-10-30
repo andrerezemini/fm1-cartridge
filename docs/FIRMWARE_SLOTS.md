@@ -107,8 +107,8 @@ procedure, with backups, is in [FLASHING.md](FLASHING.md).
 - On hardware, writing the three slots works and reads back identical, but booting each slot, switching between
   them and the rollback are verified in software only (native tests of the cartridge server with
   simulated slots and Sloop's real UI).
-- Internal RAM in use: Melodee 235 KB (Prophet and FM6 in floating point, a 72 KB arena), Felucca
-  183 KB, Clipper 152 KB. The render time of Melodee and Felucca on the ESP32 is not measured yet:
+- Internal RAM in use: Melodee 228 KB (Prophet and FM6 in floating point, a 72 KB arena), Felucca
+  183 KB, Clipper 150 KB. The render time of Melodee and Felucca on the ESP32 is not measured yet:
   each profile logs `render_max_us` against the 1,451 µs budget of a 64-frame render, and the
   CARTRIDGE page shows AUDIO RENDER MAX.
 - A switch interrupts the audio. The chosen slot persists in `otadata` (the last one confirmed

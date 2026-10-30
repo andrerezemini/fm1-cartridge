@@ -23,7 +23,7 @@ int main(void)
     assert(clipper_synth_init(48000) == -1);
     assert(clipper_synth_init(44100) == 0);
     assert(clipper_synth_engine_count() == 23);
-    assert(strcmp(clipper_synth_upstream_revision(), "e69067211c4690f34e494b5b896e4585163dcc2b") == 0);
+    assert(strcmp(clipper_synth_upstream_revision(), "fbd8434e7b501ec5d772f5c5f656c25735929369") == 0);
     assert(clipper_synth_set_preset(999, 0) == -1);
     assert(clipper_synth_set_preset(0, 999) == -1);
     assert(clipper_synth_engine_name(999) == NULL);
@@ -157,6 +157,37 @@ int main(void)
         printf("WAVE table change: back after %u blocks, largest step %d as it comes in\n", b, step);
         assert(silent && blocks == 2 && step < 400);
     }
-    puts("clipper: 23 upstream engines, release, chunking, panic, recovery and the WAVE table build passed");
+    /* FMX's PTCH and ALG name lists end with a 0, which upstream's F_INT formatter counts up to:
+     * every value, ALG past 32 too, reads its own name (F1..F16, B1..B27; PAT, 1..40). */
+    {
+        uint32_t fmx = 0, ptch = 0, alg = 0, i;
+        clipper_param_t d;
+        char want[8];
+        for (uint32_t e = 0; e < clipper_synth_engine_count(); ++e)
+            if (!strcmp(clipper_synth_engine_name(e), "FMX")) fmx = e;
+        assert(fmx && clipper_synth_init(44100) == 0 && clipper_synth_set_preset(fmx, 0) == 0);
+        for (i = 0; i < clipper_synth_param_count(); ++i) {
+            if (clipper_synth_param_get(i, &d)) continue;
+            if (!strcmp(d.name, "ENG PTCH")) ptch = i;
+            if (!strcmp(d.name, "ENG ALG")) alg = i;
+        }
+        assert(ptch && alg);
+        assert(!clipper_synth_param_get(ptch, &d) && d.min == 0 && d.max == 42);
+        for (int32_t v = d.min; v <= d.max; ++v) {
+            snprintf(want, sizeof want, v < 16 ? "F%d" : "B%d", v < 16 ? v + 1 : v - 15);
+            assert(!clipper_synth_param_set(ptch, v) && !clipper_synth_param_get(ptch, &d) && !strcmp(d.text, want));
+        }
+        assert(!clipper_synth_param_get(alg, &d) && d.min == 0 && d.max == 40);
+        for (int32_t v = d.min; v <= d.max; ++v) {
+            snprintf(want, sizeof want, "%d", v);
+            assert(!clipper_synth_param_set(alg, v) && !clipper_synth_param_get(alg, &d) &&
+                   !strcmp(d.text, v ? want : "PAT"));
+        }
+        assert(clipper_synth_midi(0x90, 48, 110) == 0);   /* ALG 40 plays */
+        clipper_synth_render(audio, 8192);
+        assert(energy(audio, 16384) > 100000);
+        clipper_synth_panic();
+    }
+    puts("clipper: 23 upstream engines, release, chunking, panic, recovery, the WAVE table build and FMX's name lists passed");
     return 0;
 }

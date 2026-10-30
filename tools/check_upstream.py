@@ -11,7 +11,7 @@ from pathlib import Path
 root = Path(__file__).resolve().parents[1] / "third_party"
 PATCHED = {
     "clipper": {"firmware/hal/fm1_xip.h"},                 # the isolated flash stub
-    "felucca": {"firmware/hal/fm1_xip.h"},                 # the same stub: no user sample slots
+    "felucca": {"firmware/bsp/chip/fm1_xip.h"},            # the same stub, in felucca-bsp: no user sample slots
     "melodee": {"firmware/src/resources.c"},               # the host arena sizes, overridable by the port
 }
 failures = []
