@@ -69,6 +69,49 @@ menu "FM1 Cartridge"
             Smaller cuts latency and leaves less room for a slow render pass
             (render_max_us, pass_max_us and underruns on the UART show it).
 
+    config FM1_BATTERY
+        bool "Read the cell through a divider on an ADC pin"
+        depends on FM1_AUDIO_SYNTH
+        default n
+        help
+            The Super Mini gives the firmware no battery reading of its own: this
+            needs a divider wired from BAT+ to an ADC1 pin (hardware/README.md,
+            battery reading). The cartridge then sends the cell's level to the
+            FM-1 (CART_BATTERY, CART_POWER), which shows it on the CARTRIDGE page,
+            and fades its audio out at the cutoff.
+
+    config FM1_BATTERY_GPIO
+        int "ADC1 pin of the divider (GPIO1..GPIO10; not GPIO3, a strapping pin)"
+        depends on FM1_BATTERY
+        range 1 10
+        default 1
+
+    config FM1_BATTERY_DIVIDER
+        int "Divider ratio x1000: the cell's voltage over the pin's"
+        depends on FM1_BATTERY
+        range 1000 4000
+        default 2000
+        help
+            2000 for two equal resistors (100 kOhm each: 4.2 V reads 2.1 V on the
+            pin, within the ADC's 12 dB range, and the divider draws 21 uA).
+
+    config FM1_BATTERY_LOW_MV
+        int "mV under which the FM-1 shows the cell as LOW"
+        depends on FM1_BATTERY
+        range 3000 4200
+        default 3700
+
+    config FM1_BATTERY_CUTOFF_MV
+        int "mV under which the cartridge fades its audio out until the next start"
+        depends on FM1_BATTERY
+        range 3000 4200
+        default 3550
+        help
+            Five readings in a row (about 5 s) under this level fade the audio out
+            over 100 ms; it stays silent until the next start. On the prototype the
+            3V3 rail already reads 2.77 V with the cell at 3.56 V (BENCH_TESTS.md):
+            set this from the G6 measurement of where 3V3 leaves its range.
+
     config FM1_SLOT_SWITCH_MS
         int "FIRMWARE: ms the knob rests on another slot before rebooting into it"
         range 500 10000

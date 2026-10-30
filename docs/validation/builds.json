@@ -14,7 +14,7 @@
       "profile": "midi",
       "binary": "firmware/build-midi/fm1_cartridge.bin",
       "bytes": 287808,
-      "sha256": "bfd55866f427500c4251a5ce5bb67e33083cb98de477c9c216912ce71017f43a",
+      "sha256": "51e843001bca534e820cfef9343399472ea6a18d8a3448a565cb999488db0a25",
       "app_slot_bytes": 1310720,
       "build_result": "passed",
       "hardware_tested": false
@@ -23,7 +23,7 @@
       "profile": "midi-4m2m",
       "binary": "firmware/build-midi-4m2m/fm1_cartridge.bin",
       "bytes": 283536,
-      "sha256": "9caa6c1cb6daf762561a881e5894105155811c1550d6ead174f20337f03fe444",
+      "sha256": "d99b824465c424ea5666a84dd07e51aab5a2e0f956c61264f09900539812ebc6",
       "app_slot_bytes": 1310720,
       "build_result": "passed",
       "hardware_tested": false
@@ -31,8 +31,8 @@
     {
       "profile": "tone",
       "binary": "firmware/build-tone/fm1_cartridge.bin",
-      "bytes": 316576,
-      "sha256": "0908717c58104e308a2bcd379fbd99131418256e61e076afa462a8dfa6ecee90",
+      "bytes": 316592,
+      "sha256": "c04906ed8b30b1546e3d176c3d606b6bf1265565d1da89327a5280eede66a0fa",
       "app_slot_bytes": 1310720,
       "build_result": "passed",
       "hardware_tested": false
@@ -41,7 +41,7 @@
       "profile": "tone-4m2m",
       "binary": "firmware/build-tone-4m2m/fm1_cartridge.bin",
       "bytes": 312320,
-      "sha256": "d79a4decf6921f9d5cbf903896976d97a95a8da9617bc509f849689ee61d8302",
+      "sha256": "34785f6bfcd062b2a7ed7c4e4574c81877a92d09e46f9db1ca7922a9b1cc886e",
       "app_slot_bytes": 1310720,
       "build_result": "passed",
       "hardware_tested": false
@@ -49,8 +49,8 @@
     {
       "profile": "clipper",
       "binary": "firmware/build-clipper/fm1_cartridge.bin",
-      "bytes": 764896,
-      "sha256": "a296956ec1214cb937a6c2410990c337d80736e7a19c38cf66639a7afda45e1a",
+      "bytes": 765360,
+      "sha256": "8ea45aaf07c95e5ccdaaa3f37cd9460cf821aa362ce8c6c7b89952344ff61422",
       "app_slot_bytes": 1310720,
       "build_result": "passed",
       "hardware_tested": false
@@ -58,8 +58,8 @@
     {
       "profile": "clipper-4m2m",
       "binary": "firmware/build-clipper-4m2m/fm1_cartridge.bin",
-      "bytes": 761136,
-      "sha256": "452a14d02ab066ca307418da3d04611262ead9028bc892f31e86e1816389ec4c",
+      "bytes": 761600,
+      "sha256": "aa5cc770cf6e9e1455b7f4960c76d2d955da2a549ae32b43aaeb880446ee95d1",
       "app_slot_bytes": 1310720,
       "build_result": "passed",
       "hardware_tested": false
@@ -67,8 +67,8 @@
     {
       "profile": "felucca",
       "binary": "firmware/build-felucca/fm1_cartridge.bin",
-      "bytes": 608464,
-      "sha256": "22a84cb6f26d6abb28bb76e42e9439da11fddbb3a1233392e22ec2e041e49cea",
+      "bytes": 608912,
+      "sha256": "1ddcb6d929473ada150ad5fa0e5615a2d543302b6284a40ed3064bd9d8414ba6",
       "app_slot_bytes": 1310720,
       "build_result": "passed",
       "hardware_tested": false
@@ -76,8 +76,8 @@
     {
       "profile": "felucca-4m2m",
       "binary": "firmware/build-felucca-4m2m/fm1_cartridge.bin",
-      "bytes": 604688,
-      "sha256": "e3c54a672cdd1dd89635969af9b19eb76864024361e4654bb396a05de026646d",
+      "bytes": 605152,
+      "sha256": "aaae95cfb488196403a376fdb10cee636df01e41a08651398d8b1b93e0e36e31",
       "app_slot_bytes": 1310720,
       "build_result": "passed",
       "hardware_tested": false
@@ -85,8 +85,8 @@
     {
       "profile": "melodee",
       "binary": "firmware/build-melodee/fm1_cartridge.bin",
-      "bytes": 600304,
-      "sha256": "e2744b00853fd8ee84cae828a12e0d67b6c3a8317bd8b902352af9cbc84b9a97",
+      "bytes": 601680,
+      "sha256": "8f5a60fa9b0eb168d4a389a8a2af75e04dd0da90c7f95d25ea67423b950b71c3",
       "app_slot_bytes": 1310720,
       "build_result": "passed",
       "hardware_tested": false
@@ -94,8 +94,8 @@
     {
       "profile": "melodee-4m2m",
       "binary": "firmware/build-melodee-4m2m/fm1_cartridge.bin",
-      "bytes": 596528,
-      "sha256": "eca5a003b01419e0f31370f56c5e0bbf14c84e897caafaaddbf26b6ff03f534d",
+      "bytes": 597904,
+      "sha256": "b69a4cecba86153ce33713ede62e7e4f3a934602c34b62cc66f372549ae4204e",
       "app_slot_bytes": 1310720,
       "build_result": "passed",
       "hardware_tested": false

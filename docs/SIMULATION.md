@@ -104,8 +104,9 @@ on macOS: `afplay out/clipper.wav`.
 Existing output files are overwritten. The generated sequence plays notes
 `60, 64, 67, 72, 67, 64, 62, 55`, one every 500 ms, each released after 400 ms, with a 120 BPM
 MIDI clock. It is a deterministic fixture, not a sequencer or a MIDI file reader. Presets are
-chosen through the API or the CLI; every adapter rejects Program Change, and Clipper also rejects
-CC 20.
+chosen through the API or the CLI; every adapter rejects Program Change (the cartridge server
+handles it before the adapter, [CARTRIDGE.md](CARTRIDGE.md#program-change-and-bank-select)), and
+Clipper also rejects CC 20.
 
 With `--faults`, the pair is disconnected between 3.0 and 3.3 s, loses packets between 6.0 and
 6.1 s and periodically every 997 ms, and receives an invalid three-byte packet at 7.0 s. Run at

@@ -16,7 +16,7 @@ ported this way; the steps below are theirs.
   hardware. Its includes are the port's file list.
 - **Sound, not another sequencer.** The FM-1 runs Sloop; a slot adds engines and presets that the
   cartridge track plays. A firmware whose value is its sequencer or its keyboard UI adds little.
-- **One core and the ESP32-S3's memory.** Internal RAM is about 341 KB, with Melodee using 228 KB;
+- **One core and the ESP32-S3's memory.** Internal RAM is about 341 KB, with Melodee using 251 KB;
   voices and per-sample state must stay in internal RAM, and only large, sequentially read
   buffers can go to PSRAM. Code written for the FM-1's second core must have a single-core path.
 

@@ -19,6 +19,9 @@
 #if CONFIG_FM1_AUDIO_SYNTH
 #include "persist.h"
 #endif
+#if CONFIG_FM1_BATTERY
+#include "battery_adc.h"
+#endif
 
 static const char *TAG = "cartridge";
 
@@ -138,6 +141,11 @@ void app_main(void)
 #if CONFIG_FM1_ENABLE_UAC_TX
     int64_t audio_report_at = esp_timer_get_time() + 5000000;
 #endif
+#if CONFIG_FM1_BATTERY
+    bool battery = fm1_battery_adc_init();
+    uint32_t cell_mv = 0;
+    int64_t battery_at = esp_timer_get_time();
+#endif
     for (;;) {
         app_event_t event;
         if (xQueueReceive(queue, &event, pdMS_TO_TICKS(100)) == pdTRUE) {
@@ -178,6 +186,13 @@ void app_main(void)
         }
 #endif
         int64_t now = esp_timer_get_time();
+#if CONFIG_FM1_BATTERY
+        if (battery && now >= battery_at) {
+            cell_mv = fm1_battery_adc_mv();
+            fm1_audio_battery(cell_mv);
+            battery_at = now + 1000000;
+        }
+#endif
         if (now >= report_at) {
             if (notes_on || notes_off || others)
                 ESP_LOGI(TAG, "MIDI notes on=%" PRIu32 " off=%" PRIu32 " other=%" PRIu32, notes_on, notes_off, others);
@@ -197,6 +212,9 @@ void app_main(void)
                          " restarts=%" PRIu32 " render_max_us=%" PRIu32 " pass_max_us=%" PRIu32
                          " (64-frame budget=1451 us)", s.frames, s.underruns, s.write_retries, s.restarts,
                          s.render_max_us, s.pass_max_us);
+#if CONFIG_FM1_BATTERY
+            if (battery) ESP_LOGI(TAG, "battery cell=%" PRIu32 " mV", cell_mv);
+#endif
             audio_report_at = now + 5000000;
         }
 #endif

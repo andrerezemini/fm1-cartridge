@@ -1,12 +1,12 @@
 diff --git a/README.md b/README.md
-index 209004d..d33b23f 100644
+index 209004d..07f1991 100644
 --- a/README.md
 +++ b/README.md
 @@ -1,3 +1,11 @@
 +> **Cartridge profile (`build-cartridge.sh`):** USB audio playback from an ESP32-S3
 +> cartridge into the mixer, the GLO → CARTRIDGE page for the cartridge's three firmwares
-+> (Clipper, Melodee, Felucca), the cartridge track and HOME → USB → CHARGE. USB capture and
-+> CDC are off in that profile. See [cartridge operation](docs/CARTRIDGE_USB_RETURN.md) and
++> (Clipper, Melodee, Felucca), the cartridge track, Program Change to the cartridge and
++> HOME → USB → CHARGE / CART DELAY. USB capture and CDC are off in that profile. See [cartridge operation](docs/CARTRIDGE_USB_RETURN.md) and
 +> [build / validation](docs/CARTRIDGE_BUILD.md); what is observed and what is still unverified
 +> on the hardware is in the cartridge project's `docs/ROADMAP.md`. The upstream installer
 +> linked below does not install this build.
@@ -36,10 +36,10 @@ index 0000000..eda41bd
 +exec sh ./build.sh "$@"
 diff --git a/docs/CARTRIDGE_BUILD.md b/docs/CARTRIDGE_BUILD.md
 new file mode 100644
-index 0000000..4fea18c
+index 0000000..aab6077
 --- /dev/null
 +++ b/docs/CARTRIDGE_BUILD.md
-@@ -0,0 +1,139 @@
+@@ -0,0 +1,143 @@
 +# Building and testing the cartridge profile
 +
 +This tree is Sloop 2.8.4 (`https://github.com/isod89/sloop-fm1.git`, revision
@@ -64,7 +64,7 @@ index 0000000..4fea18c
 +`build-cartridge.sh` sets `FELUCCA_CARTRIDGE=1`, `FELUCCA_UAC_RX=1`, `FELUCCA_UAC=0` and
 +`FELUCCA_CDC=0`. The FM-1 receives playback and keeps USB MIDI. USB capture of the master and the
 +CDC console are disabled, which leaves flash for the receiver and later growth (with capture as
-+well the image leaves 772 B free); the local engines, projects, OTA and TRS MIDI keep the upstream
++well the image leaves 848 B free); the local engines, projects, OTA and TRS MIDI keep the upstream
 +defaults. The normal build `sh build.sh` keeps its defaults.
 +`tools/build.py` also accepts `FELUCCA_UAC`, `FELUCCA_UAC_48K` and `FELUCCA_UAC_RX`, with values
 +`0` or `1`. `FELUCCA_CARTRIDGE_DIAG=1 sh build-cartridge.sh` adds the receiver counters to the
@@ -91,8 +91,8 @@ index 0000000..4fea18c
 +
 +| Resource | Upstream 2.8.4 | Cartridge profile | Diagnostic build | Limit |
 +| --- | ---: | ---: | ---: | ---: |
-+| App image | 571,776 B | **574,044 B** | 574,828 B | 581,564 B |
-+| Free flash | 9,788 B | **7,520 B** | 6,736 B | |
++| App image | 571,776 B | **575,348 B** | 576,228 B | 581,564 B |
++| Free flash | 9,788 B | **6,216 B** | 5,336 B | |
 +| RAM `.data + .bss` | 59,340 B | 61,292 B | 61,340 B | 98,304 B |
 +| Low RAM | 22,772 B | 22,772 B | 22,772 B | 29,384 B after the RAM code |
 +| Pool | 333,900 B | 333,900 B | 333,900 B | 344,064 B, at least 8,192 B free |
@@ -104,8 +104,8 @@ index 0000000..4fea18c
 +additional memory is in normal RAM; the pool keeps its reserve.
 +
 +SHA-256 of the cartridge package built from this tree: `felucca.bin`
-+`f24376b4b991ff7bff530e6ad571c0288aa0716e2e2e3e64f58995f885f8642a`, `felucca.fwsc`
-+`0ddb903337832d496a54facc8a8741690b4430665d3ddf340fa87bcbfffe3d37`. Sources that use
++`5b746d7055317ed39b362715506c10d826fd15ef720b04d99aef63701285200e`, `felucca.fwsc`
++`42405b3af322ed4c13f279e1fb6e4d5ff9ff380f3f878be6e97b5a740269d76b`. Sources that use
 +`__DATE__`/`__TIME__` change the hashes of a rebuild.
 +
 +## Native tests
@@ -155,7 +155,11 @@ index 0000000..4fea18c
 +  cartridge, the clock and transport with CLOCK at OFF and START on a bar line for a cartridge that
 +  comes back mid-song, LEVEL, MIDI EXPRESSION and MUTE on the return and the track's meter, the 5 s liveness query
 +  (a PRESETS turn during it kept), the query when the page is left, a signed value's knob
-+  acceleration, and recovery within 4 s after each of six outages in a row.
++  acceleration, and recovery within 4 s after each of six outages in a row; a Program Change and
++  its Bank Select from MIDI in sent to the cartridge in order (by channel and with IN = CH n),
++  the query that follows, another track's loading its Sloop sound; CART DELAY's step 25 ms early,
++  never more than half a step, and its menu row; the cell's level in the header, the LOW and
++  EMPTY messages and the title shortened beside a long status.
 +
 +The receiver and USB use the full ASan/UBSan set. Mixer and UI repeat only the upstream exclusions
 +of `shift-base` and `signed-integer-overflow`, because of the existing two's-complement DSP
@@ -181,10 +185,10 @@ index 0000000..4fea18c
 +engines and effects active.
 diff --git a/docs/CARTRIDGE_CONTROL.md b/docs/CARTRIDGE_CONTROL.md
 new file mode 100644
-index 0000000..1acf5e4
+index 0000000..e382cfa
 --- /dev/null
 +++ b/docs/CARTRIDGE_CONTROL.md
-@@ -0,0 +1,37 @@
+@@ -0,0 +1,41 @@
 +# CARTRIDGE page
 +
 +Profile `sh build-cartridge.sh`: defines `FELUCCA_CARTRIDGE=1`, playback RX=1, capture=0 and
@@ -195,7 +199,8 @@ index 0000000..1acf5e4
 +a parameter and 4 changes its value on the ESP32. The keyboard keeps sending MIDI notes. The
 +header shows the page number among the GLO pages and, once the cartridge answers, the name of the
 +firmware it runs (CLIPPER OK, MELODEE OK, FELUCCA OK), or NO AUDIO after the name while the
-+playback stream is at alt 0; NO LINK means there is no valid answer. The parameter FIRMWARE
++playback stream is at alt 0, and the cartridge's battery level when it reads its cell; NO LINK
++means there is no valid answer. The title shortens (CART 2/10, CART) to leave the status room. The parameter FIRMWARE
 +(knob 3) and knob 4 pick the ESP32 firmware slot to boot. The knobs accelerate as Sloop's own. The
 +other pages keep controlling Sloop.
 +
@@ -203,6 +208,9 @@ index 0000000..1acf5e4
 +out over MIDI, its engine stays silent, it shows the cartridge's names, and PRESETS (HOME, TRACKS,
 +the PRESETS page) browses the cartridge's presets across engines; its LEVEL, MIDI EXPRESSION and
 +MUTE set the USB return and its meter shows it; Sloop sends the cartridge START, STOP and the clock while it answers.
++A Program Change from MIDI in for the cartridge track, with its Bank Select, goes to the cartridge,
++which picks its sound with it, and CART DELAY (menu HOME → USB, KNOB 3) sends the track's steps
++early by the return's latency.
 +See the cartridge project's `docs/CARTRIDGE.md`.
 +
 +The FM-1 and the ESP32 run the same protocol version, or the ESP32 a newer one, read as far as
@@ -224,10 +232,10 @@ index 0000000..1acf5e4
 +physical validation of the cartridge. Build figures in [CARTRIDGE_BUILD.md](CARTRIDGE_BUILD.md).
 diff --git a/docs/CARTRIDGE_USB_RETURN.md b/docs/CARTRIDGE_USB_RETURN.md
 new file mode 100644
-index 0000000..184911c
+index 0000000..3f835cc
 --- /dev/null
 +++ b/docs/CARTRIDGE_USB_RETURN.md
-@@ -0,0 +1,201 @@
+@@ -0,0 +1,211 @@
 +# Cartridge USB return
 +
 +This tree is Sloop 2.8.4 (`https://github.com/isod89/sloop-fm1.git`, revision
@@ -260,7 +268,7 @@ index 0000000..184911c
 +The experimental profile with capture uses 0x84 IN and 0x04 OUT at the same time. Its
 +descriptors and EP0 are exercised in simulation only, and duplex operation on the physical
 +controller is not established; the cartridge build with capture as well (`FELUCCA_UAC=1`) fits
-+the application slot with 772 B free. Use the dedicated profile.
++the application slot with 848 B free. Use the dedicated profile.
 +
 +## Controls on the FM-1
 +
@@ -271,7 +279,12 @@ index 0000000..184911c
 +   restarting restores 100%.
 +4. **KNOB 2 / CHARGE** selects **ON** (the default) or **AUTO** for the FM-1's internal charger
 +   while the cartridge is the host (section below). Also RAM-only.
-+5. The master, limiter and global effects stay in the audio path.
++5. **KNOB 3 / CART DELAY** sends the cartridge track's steps early by the return's latency, from
++   OFF to 50 ms in 1 ms steps; OCT+ turns it off and back. RAM-only: every start restores
++   `CART_DELAY_DEFAULT_MS` (`core.h`, 0 until the bench has measured the latency). The step fires
++   that much before its grid time, at most half a step early as the earliest nudge
++   (`seq.c` `micro_units`); live keys, the arpeggiator and rolls are not advanced.
++6. The master, limiter and global effects stay in the audio path.
 +
 +The return is a single stereo signal, summed once on core 0 after the sum of the cores and
 +before the global effects and limiter. It does not create a fifth track, does not change the
@@ -295,8 +308,10 @@ index 0000000..184911c
 +return's peak; a sample's note its engine had waiting for a voice's fade is dropped at the takeover.
 +The notes a player holds on the cartridge track behave as on any track: the sequencer neither
 +restarts nor ends them, and a note-off lost on a full MIDI input ring ends the notes MIDI held,
-+which then end on the cartridge too. A MIDI Program Change (with its Bank Select) received for the
-+cartridge track changes the track's own, silent sound, not the cartridge's preset. The cartridge's polyphony
++which then end on the cartridge too. A MIDI Program Change received for the cartridge track, and
++the Bank Select before it (CC 0, CC 32), go to the cartridge on the track's channel instead of
++loading a sound into the track (`seq.c` `cart_program`); 20 ms later the main loop queries the
++cartridge for its new names (`cartridge.c` `cart_program_ms`). The cartridge's polyphony
 +depends on the firmware it runs. Sloop's knobs do not send CC. While the cartridge answers, CLOCK
 +OUT runs even at OFF (`seq.c` `clkout_block`), unless SYNC follows an external clock.
 +`cart_quiet` holds the autosave and the section saves, whose flash erase runs with the interrupts
@@ -308,8 +323,11 @@ index 0000000..184911c
 +The GLO → CARTRIDGE page is numbered like the other GLO pages ("CARTRIDGE 2/10")
 +and shows in its header the name of the firmware the cartridge runs ("CLIPPER OK",
 +"MELODEE OK", "FELUCCA OK"), taken from the protocol reply (`cartridge_wire.h`,
-+`F0 7D 43 46 03`: preset index and count in 14 bits, firmware name, current slot and slot
-+count, MIDI channel). Knobs 1–4 select engine, preset, parameter and value. The second entry of the
++`F0 7D 43 46 04`: preset index and count in 14 bits, firmware name, current slot and slot
++count, MIDI channel, the cartridge's cell). When the cartridge reads its cell, its level follows on
++the right ("84%", amber when LOW, EMPTY at the cutoff), and the FM-1 says CARTRIDGE BATTERY LOW or
++EMPTY once, on any page. The title shortens to "CART 2/10" or "CART" so that it never meets the
++status on the right. Knobs 1–4 select engine, preset, parameter and value. The second entry of the
 +parameter list, **FIRMWARE** (knob 3), lists the slots in the ESP32 flash; knob 4 picks one
 +("2/3" on the right, CURRENT on the running one) and the cartridge reboots into it two
 +seconds after the knob stops. The footer explains this while FIRMWARE is selected. Without an
@@ -501,10 +519,10 @@ index d0c3286..5417f01 100644
              audio_block(o + 2u * b, CTL);
 diff --git a/firmware/src/cartridge.c b/firmware/src/cartridge.c
 new file mode 100644
-index 0000000..c5773d1
+index 0000000..3c4c549
 --- /dev/null
 +++ b/firmware/src/cartridge.c
-@@ -0,0 +1,241 @@
+@@ -0,0 +1,255 @@
 +/* SPDX-License-Identifier: GPL-3.0-only */
 +/* Main-loop client of the cartridge. Its metadata stays on the ESP32.
 + * One request at a time; bounded retries replay identical sequence/revision.
@@ -529,6 +547,10 @@ index 0000000..c5773d1
 +    uint32_t tx_count;
 +#endif
 +} cart;
++
++static volatile uint32_t cart_program_ms;   /* (seq.c cart_program, audio ISR) when a Program Change went to the
++                                            * cartridge, 0 once the main loop has asked for its new state */
++static void ui_message(const char *s);       /* (ui.c) */
 +
 +static void cart_offline(void)
 +{
@@ -682,6 +704,11 @@ index 0000000..c5773d1
 +                 * state is unchanged. Keep the LCD untouched in that case. */
 +                if (!cart.online || memcmp(cart.view + CART_ENG, v + CART_ENG,
 +                                           CART_REPLY_SIZE - 1u - CART_ENG)) cart.dirty = 1;
++                /* the cartridge's cell (protocol 4): said once on any page as it turns LOW, and at the cutoff, where
++                 * the cartridge has faded its audio out */
++                if (v[CART_POWER] != (cart.online ? cart.view[CART_POWER] : CART_POWER_NONE) &&
++                    (v[CART_POWER] == CART_POWER_LOW || v[CART_POWER] == CART_POWER_CUTOFF))
++                    ui_message(v[CART_POWER] == CART_POWER_LOW ? "CARTRIDGE BATTERY LOW" : "CARTRIDGE BATTERY EMPTY");
 +                memcpy(cart.view, v, sizeof v);
 +                cart.online = cart.seen = 1; cart.waiting = 0; cart.seen_ms = fm1_ms;
 +                if (cart.q[CART_OP] == CART_QUERY) cart.refresh = 0;     /* (a page left during a knob's request:
@@ -738,6 +765,11 @@ index 0000000..c5773d1
 +static void cart_service(int active)
 +{
 +    static uint8_t streaming;
++    if (cart_program_ms && fm1_ms - cart_program_ms >= 20u) {   /* a Program Change went to the cartridge: its new
++                                                                 * sound's names, once it has loaded it */
++        cart_program_ms = 0;
++        if (cart.online) cart.refresh = 1;
++    }
 +    cart_service_link(active);
 +    if (streaming != (uint8_t)uar.active) {         /* the header's OK / NO AUDIO follows the stream */
 +        streaming = (uint8_t)uar.active;
@@ -748,16 +780,17 @@ index 0000000..c5773d1
 +}
 diff --git a/firmware/src/cartridge_wire.h b/firmware/src/cartridge_wire.h
 new file mode 100644
-index 0000000..93c79df
+index 0000000..449a5ac
 --- /dev/null
 +++ b/firmware/src/cartridge_wire.h
-@@ -0,0 +1,52 @@
+@@ -0,0 +1,56 @@
 +/* SPDX-License-Identifier: GPL-3.0-only */
-+/* Cartridge protocol, version 3 (byte 4 of every frame). Shared verbatim between the
++/* Cartridge protocol, version 4 (byte 4 of every frame). Shared verbatim between the
 + * ESP32 firmware (core/include/fm1) and Sloop (firmware/src); all payload bytes are MIDI 7-bit.
 + * Preset index and count are 14-bit; the reply also names the running firmware and its slot
 + * (CART_FW_NAME, CART_SLOT, CART_NSLOT) and the MIDI channel the synthesizer answers
-+ * (CART_MIDI_CH: 0 OMNI, 1..16), which tells Sloop which track the cartridge plays.
++ * (CART_MIDI_CH: 0 OMNI, 1..16), which tells Sloop which track the cartridge plays, and the
++ * cartridge's cell (CART_BATTERY: 0..100 %, CART_BATTERY_NONE without a reading; CART_POWER).
 + * A later version only appends fields before the F7: a frame with a newer version byte, and as
 + * long or longer, is read as far as this version's fields go (cart_request_of; Sloop's reply
 + * check). A peer with an older version is ignored. */
@@ -765,18 +798,21 @@ index 0000000..93c79df
 +#define FM1_CARTRIDGE_WIRE_H
 +#include <stdint.h>
 +#include <stddef.h>
-+#define CART_VERSION 3u
++#define CART_VERSION 4u
 +#define CART_REQUEST_SIZE 13u
-+#define CART_REPLY_SIZE 123u
-+#define CART_USB_SIZE 164u
++#define CART_REPLY_SIZE 125u
++#define CART_USB_SIZE 168u
 +enum { CART_QUERY, CART_ENGINE, CART_PRESET, CART_PARAM, CART_VALUE, CART_REPLY = 64 };
 +enum { CART_OK, CART_STALE, CART_BAD_REQUEST };
++/* CART_POWER: no reading; the cell is fine; low; at the cutoff, where the cartridge has faded its audio out */
++enum { CART_POWER_NONE, CART_POWER_OK, CART_POWER_LOW, CART_POWER_CUTOFF };
++#define CART_BATTERY_NONE 127u
 +enum { CART_SEQ = 5, CART_OP = 7, CART_REV = 8, CART_ARG = 10,
 +       CART_STATUS = 10, CART_ENG = 11, CART_NENG = 12, CART_PRE = 13, CART_NPRE = 15,
 +       CART_PAR = 17, CART_NPAR = 19, CART_VAL = 21, CART_MIN = 23, CART_MAX = 25,
 +       CART_ENG_NAME = 27, CART_PRE_NAME = 39, CART_PAR_NAME = 63,
 +       CART_VAL_NAME = 83, CART_UNIT = 99, CART_FW_NAME = 107, CART_SLOT = 119, CART_NSLOT = 120,
-+       CART_MIDI_CH = 121 };
++       CART_MIDI_CH = 121, CART_BATTERY = 122, CART_POWER = 123 };
 +static inline uint16_t cart_u14(const uint8_t *p) { return p[0] | (uint16_t)p[1] << 7; }
 +static inline int16_t cart_s14(const uint8_t *p) { return (int16_t)(cart_u14(p) - 8192); }
 +static inline void cart_put14(uint8_t *p, uint16_t v) { p[0] = v & 127u; p[1] = (v >> 7) & 127u; }
@@ -805,10 +841,10 @@ index 0000000..93c79df
 +}
 +#endif
 diff --git a/firmware/src/core.h b/firmware/src/core.h
-index e6b875c..75feec7 100644
+index e6b875c..aa91750 100644
 --- a/firmware/src/core.h
 +++ b/firmware/src/core.h
-@@ -395,6 +395,15 @@ static inline int32_t send_thr(int32_t s, int32_t g) { return g ? s + (((127 * 2
+@@ -395,6 +395,23 @@ static inline int32_t send_thr(int32_t s, int32_t g) { return g ? s + (((127 * 2
  #define TSEL (&trk[song.sel])    /* the selected track */
  #define TDRUM (&trk[TRK_DRUM])
  static int is_drum(const track_t *t) { return t == TDRUM; }
@@ -818,6 +854,14 @@ index e6b875c..75feec7 100644
 + * goes out over MIDI instead (seq.c cart_note), and the mixer skips them (fx.c mix_units) */
 +static volatile uint8_t cart_tracks;
 +#define CART_TRACK(t) ((uint32_t)(cart_tracks >> ((uint32_t)((t) - trk) & 7u)) & 1u)
++/* CART DELAY (menu HOME -> USB, RAM only, from this default at every start): the steps of a cartridge track fire this
++ * many ms early (seq.c micro_units), so that the cartridge's audio, which comes back about that late, lands on the
++ * grid with the FM-1's own tracks. Set the default to the latency measured on the bench */
++#ifndef CART_DELAY_DEFAULT_MS
++#define CART_DELAY_DEFAULT_MS 0u
++#endif
++#define CART_DELAY_MAX_MS 50u
++static volatile uint8_t cart_delay_ms = CART_DELAY_DEFAULT_MS;
 +#else
 +#define CART_TRACK(t) 0u
 +#endif
@@ -1062,7 +1106,7 @@ index acce904..12c0390 100644
  }
  
 diff --git a/firmware/src/seq.c b/firmware/src/seq.c
-index 379606c..c4e39d4 100644
+index 379606c..fbbd37f 100644
 --- a/firmware/src/seq.c
 +++ b/firmware/src/seq.c
 @@ -108,6 +108,8 @@ static uint8_t mo_any;                     /* something was sent on since the la
@@ -1074,7 +1118,7 @@ index 379606c..c4e39d4 100644
      if (!song.g[G_MIDI] || note > 127u)
          return;
      seq_out_off(t, note);                      /* played again while on: off first */
-@@ -131,6 +133,104 @@ static void seq_out_track_off(const track_t *t)      /* every note of the track
+@@ -131,6 +133,120 @@ static void seq_out_track_off(const track_t *t)      /* every note of the track
                  midi_out_note(mo_ch[i], (w * 32u + b), 0);
              }
  }
@@ -1175,11 +1219,27 @@ index 379606c..c4e39d4 100644
 +    }
 +    ct_seen = (uint8_t)now;
 +}
++/* MIDI in: a Program Change, or a Bank Select before it (CC 0, CC 32), for a cartridge track goes to the cartridge on
++ * the track's channel (CC 0 picks its engine, CC 32 a page of 128 presets, the Program Change the preset); the track's
++ * own sound, silent, stays. The main loop then asks the cartridge for its new names (cartridge.c cart_program_ms) */
++static int cart_program(const track_t *t, uint32_t st, uint32_t d1, uint32_t d2)
++{
++    uint32_t ch;
++    if (!t || !CART_TRACK(t) || (ch = trk_midi_ch(trk_index(t))) > 15u)
++        return 0;
++    if (st == 0xC0u) {
++        midi_out_event(0x0Cu | (0xC0u | ch) << 8 | d1 << 16);
++        cart_program_ms = fm1_ms | 1u;
++    } else {
++        midi_out_event(0x0Bu | (0xB0u | ch) << 8 | d1 << 16 | d2 << 24);
++    }
++    return 1;
++}
 +#endif
  static void seq_out_all_off(void)
  {
      uint32_t i;
-@@ -1879,7 +1979,7 @@ static void kh_release(track_t *t)                  /* every held note ends */
+@@ -1879,7 +1995,7 @@ static void kh_release(track_t *t)                  /* every held note ends */
                  rec_release(t, n);
                  live_set(t, n, 0);                /* (2.8.3: no longer held for a player) */
                  trk_note_off(t, n);
@@ -1188,7 +1248,7 @@ index 379606c..c4e39d4 100644
                      midi_out_note(kh_mc[ti], n, 0);
              }
      memset(kh_set[ti], 0, sizeof kh_set[ti]);
-@@ -2150,7 +2250,8 @@ static void chord_revoice(uint32_t sel)
+@@ -2150,7 +2266,8 @@ static void chord_revoice(uint32_t sel)
                  } else {
                      input_off(t, n);
                  }
@@ -1198,7 +1258,7 @@ index 379606c..c4e39d4 100644
              }
          }
          for (j = 0; j < nn; j++) {                  /* the notes it gains */
-@@ -2160,7 +2261,8 @@ static void chord_revoice(uint32_t sel)
+@@ -2160,7 +2277,8 @@ static void chord_revoice(uint32_t sel)
                  in_key = (uint8_t)(k + 1u);         /* (a chord's new note: of this key, #191) */
                  input_on(t, nw[j], 100);
                  in_key = 0;
@@ -1208,7 +1268,7 @@ index 379606c..c4e39d4 100644
              }
          }
          memcpy(kb_nt[k], nw, nn);
-@@ -2308,7 +2410,8 @@ static void key_down(uint32_t k)
+@@ -2308,7 +2426,8 @@ static void key_down(uint32_t k)
              in_chord_i = i;
              input_on(t, kb_nt[k][i], 100);
              in_chord = 0;
@@ -1218,7 +1278,7 @@ index 379606c..c4e39d4 100644
          }
          in_key = 0;
          /* the pen of the SEQ layer: the keys down now (a chord), else this note */
-@@ -2357,7 +2460,7 @@ static void key_up(uint32_t k)
+@@ -2357,7 +2476,7 @@ static void key_up(uint32_t k)
              if (kh_on(t) && kh_has(t, n)) {         /* (2.7) KBD HOLD: its MIDI note-off waits with it */
                  kh_mo[kb_trk[k] % NTRK][(n >> 5) & 3u] |= 1u << (n & 31u);
                  kh_mc[kb_trk[k] % NTRK] = (uint8_t)mc;
@@ -1227,7 +1287,26 @@ index 379606c..c4e39d4 100644
                  midi_out_note(mc, n, 0);
              }
          }
-@@ -3242,12 +3345,24 @@ static uint32_t mclk_adv(uint32_t n)               /* units to advance this bloc
+@@ -2805,8 +2924,16 @@ static void seq_ratchets(track_t *t, uint32_t into, uint32_t slen)
+  * (micro >= 0), or how far before its step (micro < 0, as a negative number) */
+ static int32_t micro_units(const track_t *t, uint32_t abs, uint32_t slen)
+ {
+-    int32_t m = t->micro[abs % trk_len(t) % NSTEP];
+-    return (int32_t)(slen / 64u) * m;                /* |m| <= 32: fits */
++    int32_t m = t->micro[abs % trk_len(t) % NSTEP], u = (int32_t)(slen / 64u) * m;   /* |m| <= 32: fits */
++#if FELUCCA_CARTRIDGE
++    if (cart_delay_ms && CART_TRACK(t)) {            /* CART DELAY: a cartridge track's step that much early, at
++                                                      * most half a step (as the earliest nudge) */
++        u -= (int32_t)((uint32_t)cart_delay_ms * FS / 1000u * (uint32_t)song.g[G_BPM]);
++        if (u < -(int32_t)(slen / 2u))
++            u = -(int32_t)(slen / 2u);
++    }
++#endif
++    return u;
+ }
+ 
+ /* The steps fire in order, one a block at most, each at its nudged time (micro: 1/64 of a step early
+@@ -3242,12 +3369,24 @@ static uint32_t mclk_adv(uint32_t n)               /* units to advance this bloc
   * stopped too (the other gear knows the tempo before PLAY); START as the sequencer starts (after a count-in: when it
   * starts), with the pulse of its downbeat; STOP when it stops (CLK OUT or SYNC changed while playing: STOP too). Only
   * while SYNC is INT: a FM-1 that follows a clock never sends one back (no loop through a computer). A pulse goes out
@@ -1253,7 +1332,7 @@ index 379606c..c4e39d4 100644
          if (mco_play)
              midi_out_event(0x0Fu | 0xFCu << 8);       /* STOP */
          mco_play = 0;
-@@ -3255,14 +3370,22 @@ static void clkout_block(uint32_t n)
+@@ -3255,14 +3394,22 @@ static void clkout_block(uint32_t n)
          return;
      }
      if (song.playing && !mco_play) {
@@ -1281,7 +1360,7 @@ index 379606c..c4e39d4 100644
      while (mco_u >= MCLK_PULSE_U) {
          mco_u -= MCLK_PULSE_U;
          midi_out_event(0x0Fu | 0xF8u << 8);           /* a pulse */
-@@ -3274,6 +3397,9 @@ static void clkout_block(uint32_t n)
+@@ -3274,6 +3421,9 @@ static void clkout_block(uint32_t n)
  static void events_block(uint32_t n)
  {
      uint32_t i, pr, adv;
@@ -1291,7 +1370,7 @@ index 379606c..c4e39d4 100644
      if (mo_any && !song.g[G_MIDI]) {            /* MIDI = KEYS again: end what the sequencer had sent */
          seq_out_all_off();
          mo_any = 0;
-@@ -3396,7 +3522,7 @@ static void events_block(uint32_t n)
+@@ -3396,7 +3546,7 @@ static void events_block(uint32_t n)
          track_t *t = &trk[i];
          if ((pr >> i) & 1u) {
              kh_release(t);                            /* (2.7) KBD HOLD: what it held ends */
@@ -1300,6 +1379,29 @@ index 379606c..c4e39d4 100644
                                                         * and fade out with the old sound (voice.c sound_change):
                                                         * no release cut short (an organ's key-off) under the fade */
                  strum_cancel(t, 0, 1);
+@@ -3457,6 +3607,10 @@ static void events_block(uint32_t n)
+                                                        * track (notes and CCs); every other channel ignored */
+             if (ch != (uint32_t)song.g[G_ROUTE] - 2u)
+                 continue;
++#if FELUCCA_CARTRIDGE
++            if ((st == 0xC0u || (st == 0xB0u && (d1 == 0u || d1 == 32u))) && cart_program(TSEL, st, d1, d2))
++                continue;                             /* (the selected track is the cartridge's) */
++#endif
+             if (st == 0xB0u) {
+                 if (d1 == 0u) {                       /* (2.7.2) Bank Select: latched for the next Program Change */
+                     ch_bank[ch & 15u] = (uint8_t)d2;
+@@ -3487,6 +3641,11 @@ static void events_block(uint32_t n)
+                 midi_sel_set(ch, d1, 0);
+             }
+         } else {
++#if FELUCCA_CARTRIDGE
++            if ((st == 0xC0u || (st == 0xB0u && (d1 == 0u || d1 == 32u))) && !song.g[G_ROUTE] &&
++                cart_program(midi_track(ch), st, d1, d2))
++                continue;                                 /* (the track its channel plays is the cartridge's) */
++#endif
+             if (st == 0xB0u) {                            /* a CC (IN = CLOCK: none) */
+                 if (d1 == 0u) {                           /* (2.7.2) Bank Select: latched for the next Program Change */
+                     ch_bank[ch & 15u] = (uint8_t)d2;
 diff --git a/firmware/src/uac_rx.c b/firmware/src/uac_rx.c
 new file mode 100644
 index 0000000..141600d
@@ -1632,10 +1734,10 @@ index 0000000..141600d
 +#endif
 diff --git a/firmware/src/ui_cartridge.c b/firmware/src/ui_cartridge.c
 new file mode 100644
-index 0000000..6790b12
+index 0000000..52705a8
 --- /dev/null
 +++ b/firmware/src/ui_cartridge.c
-@@ -0,0 +1,135 @@
+@@ -0,0 +1,153 @@
 +/* SPDX-License-Identifier: GPL-3.0-only */
 +/* Full-width rows keep factory preset names readable on the 240px display. */
 +#if FELUCCA_CARTRIDGE_DIAG
@@ -1720,20 +1822,38 @@ index 0000000..6790b12
 +    /* Compose each strip off-screen, then replace it without a blank pass.
 +     * The strips cover every pixel, including gaps, on forced page entry. */
 +    if (redraw) {
++        uint32_t right = 234, power = cart.online ? cart.view[CART_POWER] : CART_POWER_NONE;
 +        cv_begin(240, 26, C_BLACK);
-+        k = page_pos(&n);                                   /* "CARTRIDGE 2/10": numbered as the other GLO pages */
-+        str_cpy(b, "CARTRIDGE", sizeof b);
-+        if (n > 1u) {
-+            str_cpy(b + str_len(b), " ", 2); fmt_int(b + str_len(b), (int32_t)k);
-+            str_cpy(b + str_len(b), "/", 2); fmt_int(b + str_len(b), (int32_t)n);
++        /* on the right, the cartridge's cell (protocol 4: "84%", amber when LOW, EMPTY at the cutoff), then
++         * "<firmware> OK": what the cartridge runs */
++        if (power != CART_POWER_NONE && (power == CART_POWER_CUTOFF || cart.view[CART_BATTERY] <= 100u)) {
++            if (power == CART_POWER_CUTOFF) str_cpy(num, "EMPTY", sizeof num);
++            else { fmt_int(num, cart.view[CART_BATTERY]); str_cpy(num + str_len(num), "%", 2); }
++            right -= text_w(&FONT_S, num);
++            cv_text(right, 3, &FONT_S, num, power >= CART_POWER_LOW ? C_AMB : C_DIM);
++            right -= 8u;
 +        }
-+        cv_text(6, 3, &FONT_S, b, C_HI);
-+        if (cart.online) {                                  /* "<firmware> OK": what the cartridge runs */
++        if (cart.online) {
 +            str_cpy(b, (const char *)cart.view + CART_FW_NAME, 12);
 +            if (!b[0]) str_cpy(b, "LINK", sizeof b);
 +            str_cpy(b + str_len(b), uar.active ? " OK" : " NO AUDIO", 10);   /* (the stream stopped: replug) */
 +        } else str_cpy(b, "NO LINK", sizeof b);
-+        cv_text(234 - text_w(&FONT_S, b), 3, &FONT_S, b, cart.online ? C_WHITE : C_DIM);
++        right -= text_w(&FONT_S, b);
++        cv_text(right, 3, &FONT_S, b, cart.online ? C_WHITE : C_DIM);
++        /* on the left, "CARTRIDGE 2/10" (numbered as the other GLO pages), else "CART 2/10", else "CART": the
++         * longest that ends 8 pixels before the status */
++        k = page_pos(&n);
++        for (row = 0; row < 3u; row++) {
++            str_cpy(b, row ? "CART" : "CARTRIDGE", sizeof b);
++            if (n > 1u && row < 2u) {
++                str_cpy(b + str_len(b), " ", 2); fmt_int(b + str_len(b), (int32_t)k);
++                str_cpy(b + str_len(b), "/", 2); fmt_int(b + str_len(b), (int32_t)n);
++            }
++            if (6u + text_w(&FONT_S, b) + 8u <= right) {
++                cv_text(6, 3, &FONT_S, b, C_HI);
++                break;
++            }
++        }
 +        cv_blit(0, 0);
 +        for (row = 0; row < 4u; row++) {
 +            cv_begin(240, CART_ROW_H, C_BLACK);
@@ -1950,7 +2070,7 @@ index b25fbbf..6511f3c 100644
              TDRUM->p[P_E0] = (int16_t)clamp(TDRUM->p[P_E0] + s, 0, DRUM_KITS - 1);
          else if (total)
 diff --git a/firmware/src/ui_menu.c b/firmware/src/ui_menu.c
-index ff8b1e1..74e1d8d 100644
+index ff8b1e1..1e2f50a 100644
 --- a/firmware/src/ui_menu.c
 +++ b/firmware/src/ui_menu.c
 @@ -7,19 +7,69 @@
@@ -1960,8 +2080,8 @@ index ff8b1e1..74e1d8d 100644
 -enum { MI_COLOR, MI_ZOOM, MI_ACCEL, MI_LIGHTS, MI_KEYS, MI_NOTES, MI_LOWCUT, MI_USB,
 +/* Capture-only settings are hidden in the playback-only cartridge profile.
 + * Return gain is live RAM state, deliberately outside the persisted settings layout.
-+ * With playback (FELUCCA_UAC_RX) a USB section comes before SYSTEM: USB RETURN, CHARGE (cartridge profile) and
-+ * USB SERIAL (CDC builds), so that AUDIO keeps four rows at most; six tabs fit 240 pixels with SYSTEM as SYS. */
++ * With playback (FELUCCA_UAC_RX) a USB section comes before SYSTEM: USB RETURN, CHARGE and CART DELAY (cartridge
++ * profile) and USB SERIAL (CDC builds), so that AUDIO keeps four rows at most; six tabs fit 240 pixels with SYSTEM as SYS. */
 +#define MI_CAPTURE (!FELUCCA_UAC_RX || FELUCCA_UAC)
 +enum { MI_COLOR, MI_ZOOM, MI_ACCEL, MI_LIGHTS, MI_KEYS, MI_NOTES, MI_LOWCUT,
 +#if MI_CAPTURE
@@ -1977,7 +2097,7 @@ index ff8b1e1..74e1d8d 100644
 +#if FELUCCA_UAC_RX
 +       MI_RETURN,
 +#if FELUCCA_CARTRIDGE
-+       MI_CHARGE,
++       MI_CHARGE, MI_CDELAY,
 +#endif
  #if FELUCCA_CDC
         MI_SERIAL,
@@ -2000,7 +2120,7 @@ index ff8b1e1..74e1d8d 100644
 +#if FELUCCA_UAC_RX
 +                                              "USB RETURN",
 +#if FELUCCA_CARTRIDGE
-+                                              "CHARGE",
++                                              "CHARGE", "CART DELAY",
 +#endif
  #if FELUCCA_CDC
                                                "USB SERIAL",
@@ -2057,7 +2177,7 @@ index ff8b1e1..74e1d8d 100644
      case MI_FRESO: {                                  /* (2.7.2) the track filter's resonance, 0 (clean) .. 10 (fx.c) */
          static char b[4];
          if (!flt_reso) {
-@@ -85,6 +140,19 @@ UI_SMALL static const char *mi_value(uint32_t i, uint16_t *c)
+@@ -85,6 +140,26 @@ UI_SMALL static const char *mi_value(uint32_t i, uint16_t *c)
          fmt_int(b, flt_reso > 10u ? 10 : flt_reso);
          return b;
      }
@@ -2072,25 +2192,32 @@ index ff8b1e1..74e1d8d 100644
 +#if FELUCCA_CARTRIDGE
 +    case MI_CHARGE:                                   /* the FM-1's charger with the cartridge as host (cartridge.c) */
 +        return cart_charge_on ? "ON" : "AUTO";
++    case MI_CDELAY: {                                 /* the cartridge track's steps early by the return (core.h) */
++        static char b[8];
++        if (!cart_delay_ms) { *c = C_DIM; return "OFF"; }
++        fmt_int(b, cart_delay_ms);
++        str_cpy(b + str_len(b), " MS", 4);
++        return b;
++    }
 +#endif
 +#endif
      case MI_CPU1:                                     /* the render on both cores (fx.c); live, the sound is the same */
          *c = mi_cpu1_have() ? C_HI : C_DIM;
          return cpu1_off ? "OFF" : "ON";
-@@ -112,6 +180,12 @@ UI_SMALL static void draw_menu(void)
+@@ -112,6 +187,12 @@ UI_SMALL static void draw_menu(void)
                     settings.zoom * 104729u + lights_lvl * 1299709u + lights_keys * 15485863u + ml_count() * 2654435u +
                     lights_notes * 32452843u + usb_full * 49979687u + usb_serial * 86028121u + usb_rate * 15486719u + theme_shown() * 32452867u + theme.crc + cpu1_off * 122949829u +
                     knob_accel_off * 179424673u + drum_preview * 236887691u + step_adv_off * 373587883u + flt_reso * 512927357u;
 +#if FELUCCA_UAC_RX
 +    sig += uac_rx_gain * 67867967u;
 +#if FELUCCA_CARTRIDGE
-+    sig += (cart_charge_on * 2u + cart_keep.off) * 57885161u;
++    sig += (cart_charge_on * 2u + cart_keep.off) * 57885161u + cart_delay_ms * 413158511u;
 +#endif
 +#endif
      if (!ui.force && sig == ui.menu_sig)
          return;
      ui.menu_sig = sig;
-@@ -167,7 +241,7 @@ UI_SMALL static void draw_menu(void)
+@@ -167,7 +248,7 @@ UI_SMALL static void draw_menu(void)
                  if (i == sec)
                      cv_rect(x - 2, 3, w + 4, 18, C_LINE);
                  cv_text(x, 4, &FONT_S, MS_NAME[i], i == sec ? C_WHITE : C_DIM);
@@ -2099,7 +2226,7 @@ index ff8b1e1..74e1d8d 100644
              }
              for (i = MS_FIRST[sec]; i < MS_FIRST[sec + 1u]; i++) {
                  uint32_t r = i - MS_FIRST[sec];
-@@ -191,14 +265,20 @@ UI_SMALL static void draw_menu(void)
+@@ -191,14 +272,20 @@ UI_SMALL static void draw_menu(void)
                      for (q = 0; q < 5u; q++)
                          cv_rect(xv + 10 + (int32_t)q * 14, y + 28, 10, 10, pal[q]);
                  }
@@ -2120,7 +2247,7 @@ index ff8b1e1..74e1d8d 100644
              }
              if (MS_FIRST[sec + 1u] - MS_FIRST[sec] <= 3u) {   /* (SYSTEM has four rows with 2ND CORE: its fourth
                                                                 * row, ABOUT, takes the help's place) */
-@@ -261,14 +341,17 @@ UI_SMALL static void mi_set(uint32_t i, int32_t s)
+@@ -261,14 +348,17 @@ UI_SMALL static void mi_set(uint32_t i, int32_t s)
          fx_lowcut = (uint8_t)(settings.lowcut != 0);
          break;
      }
@@ -2138,7 +2265,7 @@ index ff8b1e1..74e1d8d 100644
      case MI_RATE:                                      /* (2.7 beta) AUTO 44.1 48: the knob steps (stops at the ends),
                                                          * OCT+ round; at the next start (usb.c usb_rate_mode) */
          if (s > 0 && usb_rate < 2u)
-@@ -278,6 +361,7 @@ UI_SMALL static void mi_set(uint32_t i, int32_t s)
+@@ -278,6 +368,7 @@ UI_SMALL static void mi_set(uint32_t i, int32_t s)
          else if (!s)
              usb_rate = (uint8_t)((usb_rate + 1u) % 3u);
          break;
@@ -2146,7 +2273,7 @@ index ff8b1e1..74e1d8d 100644
      case MI_FRESO:                                     /* (2.7.2) 0 (OFF/clean) .. 10, stops at the ends; OCT+ steps round */
          if (s > 0 && flt_reso < 10u)
              flt_reso++;
-@@ -286,6 +370,25 @@ UI_SMALL static void mi_set(uint32_t i, int32_t s)
+@@ -286,6 +377,33 @@ UI_SMALL static void mi_set(uint32_t i, int32_t s)
          else if (!s)
              flt_reso = (uint8_t)((flt_reso >= 10u ? 0u : flt_reso + 1u));
          break;
@@ -2167,6 +2294,14 @@ index ff8b1e1..74e1d8d 100644
 +        cart_charge_on = (uint8_t)(s > 0 ? 1u : s < 0 ? 0u : !cart_charge_on);
 +        cart_charge_apply();
 +        break;
++    case MI_CDELAY: {                                  /* 1 ms a step, OFF .. CART_DELAY_MAX_MS; OCT+ turns it OFF and
++                                                        * back to what it was */
++        static uint8_t before = CART_DELAY_DEFAULT_MS ? CART_DELAY_DEFAULT_MS : 25u;
++        if (!s && cart_delay_ms) before = cart_delay_ms, cart_delay_ms = 0;
++        else if (!s) cart_delay_ms = before;
++        else cart_delay_ms = (uint8_t)clamp((int32_t)cart_delay_ms + (s > 0 ? 1 : -1), 0, CART_DELAY_MAX_MS);
++        break;
++    }
 +#endif
 +#endif
      case MI_CPU1:                                      /* right ON, left OFF; at once (the next block renders so) */
@@ -2828,10 +2963,10 @@ index 0000000..296c45b
 +}
 diff --git a/tests/cartridge_ui_test.c b/tests/cartridge_ui_test.c
 new file mode 100644
-index 0000000..c2066ac
+index 0000000..3d58794
 --- /dev/null
 +++ b/tests/cartridge_ui_test.c
-@@ -0,0 +1,588 @@
+@@ -0,0 +1,703 @@
 +/* SPDX-License-Identifier: GPL-3.0-only */
 +#include <stdint.h>
 +#define FELUCCA_CARTRIDGE 1
@@ -3231,6 +3366,120 @@ index 0000000..c2066ac
 +    check(uar_track_q12 == 4096u && trk[0].peak >= 5000 && !uar_peak, "the track's meter reads the return");
 +}
 +#ifndef CARTRIDGE_UI_HARNESS_ONLY
++/* MIDI in: a Program Change and its Bank Select (CC 0, CC 32) on the cartridge track go to the cartridge, in order and
++ * on its channel, and a query 20 ms later brings its new names; the track's own sound stays. On another track they load
++ * Sloop's sound as before. CART DELAY: the cartridge track's steps go out that many ms early. The header: the cell's
++ * level on the right, the title shortened to keep clear of a long status */
++static uint32_t midi_at(uint32_t status, uint32_t d1)    /* where in the MIDI OUT ring since mo_r, or MQ */
++{
++    uint32_t i;
++    for (i = mo_r; i != mo_w; i++)
++        if (((midi_out_q[i % MQ] >> 8) & 0xFFu) == status && ((midi_out_q[i % MQ] >> 16) & 0x7Fu) == d1) return i - mo_r;
++    return MQ;
++}
++static uint32_t step_out_sample(uint32_t delay_ms)       /* the sample the second step's note went out at */
++{
++    uint8_t n62 = 62;
++    uint32_t f, at = 0;
++    cart_delay_ms = (uint8_t)delay_ms;
++    put_step(&trk[0], 1, 1, &n62, ST_NOTE, 0);
++    mo_r = mo_w; transport_req = 1;
++    for (f = 0; f < 40u && !at; f++) {
++        frame();
++        if (midi_seen(0x90 | trk_midi_ch(0), 62)) at = (clk_beat * BEAT_U + clk_pos) / (uint32_t)song.g[G_BPM];
++    }
++    transport_req = 2; frames(2);
++    put_step(&trk[0], 1, 0, &n62, ST_REST, 0);
++    cart_delay_ms = CART_DELAY_DEFAULT_MS;
++    return at;
++}
++static void test_cartridge_program_and_delay(void)
++{
++    uint8_t route = (uint8_t)song.g[G_ROUTE], sel = song.sel;
++    uint32_t e0 = trk[0].eng_req, p0 = trk[0].preset, ch = trk_midi_ch(0), ch1 = trk_midi_ch(1);
++    set_cart_channel(1); frame();
++    leave_page();
++    song.g[G_ROUTE] = 0;                                 /* (MIDI in by channel) */
++    mo_r = mo_w;
++    midi_in_event(0x0Bu | (0xB0u | ch) << 8 | 0u << 16 | 2u << 24);
++    midi_in_event(0x0Bu | (0xB0u | ch) << 8 | 32u << 16 | 1u << 24);
++    midi_in_event(0x0Cu | (0xC0u | ch) << 8 | 5u << 16);
++    frame();
++    check(midi_at(0xB0 | ch, 0) < midi_at(0xB0 | ch, 32) && midi_at(0xB0 | ch, 32) < midi_at(0xC0 | ch, 5) &&
++          midi_at(0xC0 | ch, 5) < MQ, "Bank Select and Program Change on the cartridge track go to the cartridge, in order");
++    check(!pc_req[0] && trk[0].eng_req == e0 && trk[0].preset == p0, "the cartridge track's own sound stays");
++    cart_service(0);
++    check(!cart.waiting, "no query before the cartridge has loaded the sound");
++    fm1_ms += 25; cart_service(0);
++    check(cart.waiting && cart.q[CART_OP] == CART_QUERY && !cart_program_ms, "a query 20 ms later fetches its new names");
++    exchange();
++    mo_r = mo_w; ui.msg[0] = 0;
++    midi_in_event(0x0Cu | (0xC0u | ch1) << 8 | 3u << 16); frame();
++    check(midi_at(0xC0 | ch1, 3) == MQ && !strcmp(ui.msg, "T2 PROG 3"), "a Program Change for another track loads its Sloop sound");
++    song.g[G_ROUTE] = 2;                                 /* IN = CH 1: the selected track */
++    song.sel = 0; mo_r = mo_w;
++    midi_in_event(0x0Cu | 0xC0u << 8 | 7u << 16); frame();
++    check(midi_at(0xC0 | ch, 7) < MQ && !pc_req[0], "IN = CH n: the selected cartridge track's Program Change goes to the cartridge");
++    song.sel = 1; mo_r = mo_w; ui.msg[0] = 0;
++    midi_in_event(0x0Cu | 0xC0u << 8 | 7u << 16); frame();
++    check(midi_at(0xC0 | ch1, 7) == MQ && !strcmp(ui.msg, "T2 PROG 7"), "and another selected track's loads its Sloop sound");
++    song.sel = sel; song.g[G_ROUTE] = route;
++    fm1_ms += 25; cart_service(0); if (so_w != so_r) exchange();
++    {   /* CART DELAY: the same step 25 ms earlier (one frame of 16 ms either way) */
++        uint32_t on = step_out_sample(0), early = step_out_sample(25), d = on - early;
++        printf("cart delay: the step went out at sample %u, %u with 25 ms\n", on, early);
++        check(on && early && d + 704u >= 25u * FS / 1000u && d <= 25u * FS / 1000u + 704u,
++              "CART DELAY 25 ms: the cartridge track's step goes out 25 ms early");
++        check(step_out_sample(50) + 704u >= on - div_samples(trk_div(&trk[0])) / 2u,
++              "never more than half a step early");
++    }
++    {   /* the menu row: KNOB 3 of HOME -> USB, OFF .. 50 ms, OCT+ off and back */
++        cart_delay_ms = 0;
++        mi_set(MI_CDELAY, 1); mi_set(MI_CDELAY, 1);
++        check(cart_delay_ms == 2u, "CART DELAY: a knob step is 1 ms");
++        mi_set(MI_CDELAY, 0); check(!cart_delay_ms, "OCT+ turns it OFF");
++        mi_set(MI_CDELAY, 0); check(cart_delay_ms == 2u, "and back");
++        for (uint32_t i = 0; i < 80u; i++) mi_set(MI_CDELAY, 1);
++        check(cart_delay_ms == CART_DELAY_MAX_MS, "it stops at its maximum");
++        check(MS_FIRST[MS_RETURN + 1] - MS_FIRST[MS_RETURN] <= 4u && mi_sec(MI_CDELAY) == MS_RETURN,
++              "it is a row of the USB section, which keeps four rows at most");
++        cart_delay_ms = CART_DELAY_DEFAULT_MS;
++    }
++#ifndef CART_REAL_SERVER
++    {   /* protocol 4: the cell in the header, a message as it turns LOW and EMPTY; a long status shortens the title */
++        uint8_t r[CART_REPLY_SIZE];
++        uint32_t was = uar.active, n, k = page_pos(&n);
++        int32_t title = 6 + text_w(&FONT_S, "CARTRIDGE 10/10"), status = text_w(&FONT_S, "XXXXXXXXXXX NO AUDIO");
++        check(234 - text_w(&FONT_S, "EMPTY") - 8 - status >= 6, "the longest status and EMPTY fit the header");
++        check(6 + text_w(&FONT_S, "CART 10/10") + 8 <= 234 - text_w(&FONT_S, "100%") - 8 - text_w(&FONT_S, "CLIPPER OK") &&
++              title + 8 <= 234 - text_w(&FONT_S, "CLIPPER OK"),
++              "CARTRIDGE n/n and CLIPPER OK fit; with the cell's level the title is CART n/n");
++        (void)k;
++        refresh_page(); assert(drain_request() == CART_REQUEST_SIZE);
++        memcpy(r, cart.view, sizeof r);
++        cart_put14(r + CART_SEQ, cart_u14(last_request + CART_SEQ));
++        r[CART_BATTERY] = 12; r[CART_POWER] = CART_POWER_LOW; ui.msg[0] = 0;
++        response(r);
++        check(!strcmp(ui.msg, "CARTRIDGE BATTERY LOW"), "the cell turning LOW is said once, on any page");
++        uar.active = 0; ui.force = 1; frame(); ppm("cartridge-battery-low");
++        uar.active = was;
++        refresh_page(); assert(drain_request() == CART_REQUEST_SIZE);
++        cart_put14(r + CART_SEQ, cart_u14(last_request + CART_SEQ)); ui.msg[0] = 0;
++        response(r);
++        check(!ui.msg[0], "and not again while it stays LOW");
++        refresh_page(); assert(drain_request() == CART_REQUEST_SIZE);
++        cart_put14(r + CART_SEQ, cart_u14(last_request + CART_SEQ));
++        r[CART_POWER] = CART_POWER_CUTOFF;
++        response(r);
++        check(!strcmp(ui.msg, "CARTRIDGE BATTERY EMPTY"), "the cutoff is said too");
++        refresh_page(); assert(drain_request() == CART_REQUEST_SIZE);
++        cart_put14(r + CART_SEQ, cart_u14(last_request + CART_SEQ));
++        r[CART_BATTERY] = CART_BATTERY_NONE; r[CART_POWER] = CART_POWER_NONE;
++        response(r); ui.msg[0] = 0; ui.force = 1; frame();
++    }
++#endif
++    refresh_page(); exchange();                          /* (the page open again, as the tests after this expect) */
++}
 +int main(int argc, char **argv)
 +{
 +    outdir = argc > 1 ? argv[1] : "build/host";
@@ -3307,6 +3556,7 @@ index 0000000..c2066ac
 +    }
 +    test_cartridge_track();
 +    test_cartridge_lifecycle();
++    test_cartridge_program_and_delay();
 +    int16_t local_params[P_COUNT]; memcpy(local_params, TSEL->p, sizeof local_params);
 +    uint8_t old_engine = cart.view[CART_ENG];
 +    encs[panel.enc[EN_K1]] = 1; encs[panel.enc[EN_K4]] = 3; frame();

@@ -401,6 +401,14 @@ static int is_drum(const track_t *t) { return t == TDRUM; }
  * goes out over MIDI instead (seq.c cart_note), and the mixer skips them (fx.c mix_units) */
 static volatile uint8_t cart_tracks;
 #define CART_TRACK(t) ((uint32_t)(cart_tracks >> ((uint32_t)((t) - trk) & 7u)) & 1u)
+/* CART DELAY (menu HOME -> USB, RAM only, from this default at every start): the steps of a cartridge track fire this
+ * many ms early (seq.c micro_units), so that the cartridge's audio, which comes back about that late, lands on the
+ * grid with the FM-1's own tracks. Set the default to the latency measured on the bench */
+#ifndef CART_DELAY_DEFAULT_MS
+#define CART_DELAY_DEFAULT_MS 0u
+#endif
+#define CART_DELAY_MAX_MS 50u
+static volatile uint8_t cart_delay_ms = CART_DELAY_DEFAULT_MS;
 #else
 #define CART_TRACK(t) 0u
 #endif

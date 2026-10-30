@@ -15,21 +15,23 @@ male-to-male adapter ([hardware](../hardware/README.md)).
 | G1 | ESP32 ↔ Sloop, MIDI | Descriptors and bulk IN; Note On/Off and clock in the logs; disconnection/reconnection without a stuck voice | **The FM-1 keyboard plays the synthesizer on the ESP32; only the track on the configured channel reaches it. Logs, clock and reconnections PENDING** |
 | G2 | ISO OUT, ring, rate adjustment and mixer in Sloop; tested from a computer | The computer recognises the UAC output; tone/stereo on the physical output; memory and load measured; capture/CDC tested separately | **A 440 Hz tone from a computer is heard on the speaker; stereo, load and stability PENDING** |
 | G3 | The ESP32 sends a UAC tone to the G2 Sloop | Continuous audio, simultaneous MIDI, losses and latency measured; silent fallback/reconnection | **A tone and Clipper notes are heard; losses, latency and stability PENDING** |
-| G4 | Synthesizers on the ESP32-S3 | Same events/presets reproducible on the host and the ESP32; CPU/memory profile; notes and presets without artifacts | **Clipper: clean notes. Melodee and Felucca flashed, not heard. Other presets, `render_max_us`, memory and stability PENDING** |
-| G5 | cartridge control over SysEx and the firmware slots | Engine/preset/parameter/value on the four knobs; confirmed state; reconnection; slot switch and rollback | **Handshake (CLIPPER OK) shown. Knobs, slot switching and rollback PENDING** |
+| G4 | Synthesizers on the ESP32-S3 | Same events/presets reproducible on the host and the ESP32; CPU/memory profile; notes and presets without artifacts | **Clipper: clean notes, render max 673 µs, no underrun. Melodee (PROPHET): over the budget with one key at first; with QIO flash, 80 MHz PSRAM and its loops in IRAM, 2,379 µs peaks and no underrun until chords change faster than once a second. Felucca: 1,854 µs, over the 1,451 µs budget, 78 underruns ([measurements](BENCH_TESTS.md#g4-measurements-on-the-super-mini-prototype)). Per-engine figures, memory and stability PENDING** |
+| G5 | cartridge control over SysEx and the firmware slots | Engine/preset/parameter/value on the four knobs; confirmed state; reconnection; slot switch and rollback | **Clipper, Melodee and Felucca each boot from their slot and answer the page. Knobs end to end, rollback and the power-cycle checks PENDING** |
 | G6 | LiPo, switch, connector and enclosure | Current/peaks/charge/runtime measured; no backfeed; cable/fit firm without stress on the port | **PENDING** |
 
 ## Software in place
 
 - The real DSPs of Clipper, Felucca and Melodee behind `synth/fm1_synth.h` ([PORTS.md](PORTS.md)),
   native tests of the protocol, the receiver and each synthesizer, a CLI simulator with WAV/JSON
-  per synthesizer ([SIMULATION.md](SIMULATION.md)), and the cartridge server.
+  per synthesizer ([SIMULATION.md](SIMULATION.md)), and the cartridge server, which also picks the
+  sound from Bank Select and Program Change.
 - The ESP-IDF firmware with one profile per synthesizer, three firmware slots and rollback
   ([FIRMWARE_SLOTS.md](FIRMWARE_SLOTS.md)), each firmware keeping its sound in NVS. The UAC TX
-  profiles are experimental; the MIDI profile sends no audio. A native model of the audio return
+  profiles are experimental; the MIDI profile sends no audio. An optional battery reading
+  (`CONFIG_FM1_BATTERY`) needs a divider the prototype does not have. A native model of the audio return
   end to end (`tests/test_pipeline.c`) gives the buffering's latency and margin, not a measurement.
 - Sloop with a concurrent ring, ASRC, mixer input, gain control, the CARTRIDGE page, the cartridge
-  track and the charger control, following the [SLOOP_INTEGRATION.md](SLOOP_INTEGRATION.md) contract
+  track (its Program Changes sent to the cartridge, CART DELAY for its steps) and the charger control, following the [SLOOP_INTEGRATION.md](SLOOP_INTEGRATION.md) contract
   ([patch and provenance](../integrations/sloop-fm1/README.md)).
 - Test coverage in [VALIDATION.md](VALIDATION.md).
 

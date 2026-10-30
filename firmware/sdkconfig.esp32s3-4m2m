@@ -1,11 +1,14 @@
 # ESP32-S3 with in-package 4 MB flash / 2 MB quad PSRAM (the Super Mini prototype board).
 # Applied after sdkconfig.defaults and the audio profile.
+# The DSP runs from flash through the 32 KB instruction cache and keeps its delay lines in PSRAM, so
+# the cache refills set much of the render time: QIO flash (the in-package flash is quad, as the
+# eFuse reports) and PSRAM at 80 MHz.
 # CONFIG_ESPTOOLPY_FLASHSIZE_8MB is not set
 CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
-# CONFIG_ESPTOOLPY_FLASHMODE_QIO is not set
-CONFIG_ESPTOOLPY_FLASHMODE_DIO=y
+CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
+# CONFIG_ESPTOOLPY_FLASHMODE_DIO is not set
 # CONFIG_SPIRAM_MODE_OCT is not set
 CONFIG_SPIRAM_MODE_QUAD=y
 CONFIG_SPIRAM_TYPE_AUTO=y
-# CONFIG_SPIRAM_SPEED_80M is not set
-CONFIG_SPIRAM_SPEED_40M=y
+CONFIG_SPIRAM_SPEED_80M=y
+# CONFIG_SPIRAM_SPEED_40M is not set

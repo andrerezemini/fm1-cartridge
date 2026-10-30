@@ -23,6 +23,10 @@ static struct {
 #endif
 } cart;
 
+static volatile uint32_t cart_program_ms;   /* (seq.c cart_program, audio ISR) when a Program Change went to the
+                                            * cartridge, 0 once the main loop has asked for its new state */
+static void ui_message(const char *s);       /* (ui.c) */
+
 static void cart_offline(void)
 {
     if (cart.online || cart.waiting) cart.dirty = 1;
@@ -175,6 +179,11 @@ static void cart_service_link(int active)
                  * state is unchanged. Keep the LCD untouched in that case. */
                 if (!cart.online || memcmp(cart.view + CART_ENG, v + CART_ENG,
                                            CART_REPLY_SIZE - 1u - CART_ENG)) cart.dirty = 1;
+                /* the cartridge's cell (protocol 4): said once on any page as it turns LOW, and at the cutoff, where
+                 * the cartridge has faded its audio out */
+                if (v[CART_POWER] != (cart.online ? cart.view[CART_POWER] : CART_POWER_NONE) &&
+                    (v[CART_POWER] == CART_POWER_LOW || v[CART_POWER] == CART_POWER_CUTOFF))
+                    ui_message(v[CART_POWER] == CART_POWER_LOW ? "CARTRIDGE BATTERY LOW" : "CARTRIDGE BATTERY EMPTY");
                 memcpy(cart.view, v, sizeof v);
                 cart.online = cart.seen = 1; cart.waiting = 0; cart.seen_ms = fm1_ms;
                 if (cart.q[CART_OP] == CART_QUERY) cart.refresh = 0;     /* (a page left during a knob's request:
@@ -231,6 +240,11 @@ static void cart_service_link(int active)
 static void cart_service(int active)
 {
     static uint8_t streaming;
+    if (cart_program_ms && fm1_ms - cart_program_ms >= 20u) {   /* a Program Change went to the cartridge: its new
+                                                                 * sound's names, once it has loaded it */
+        cart_program_ms = 0;
+        if (cart.online) cart.refresh = 1;
+    }
     cart_service_link(active);
     if (streaming != (uint8_t)uar.active) {         /* the header's OK / NO AUDIO follows the stream */
         streaming = (uint8_t)uar.active;

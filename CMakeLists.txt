@@ -8,7 +8,8 @@ if(FM1_SANITIZE AND CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
     add_link_options(-fsanitize=address,undefined)
 endif()
 
-add_library(fm1_protocol core/usb_midi.c core/usb_descriptors.c core/audio_return.c core/cartridge_protocol.c)
+add_library(fm1_protocol core/usb_midi.c core/usb_descriptors.c core/audio_return.c core/cartridge_protocol.c
+    core/battery.c)
 target_include_directories(fm1_protocol PUBLIC core/include)
 target_compile_options(fm1_protocol PRIVATE -Wall -Wextra -Werror)
 
@@ -63,7 +64,7 @@ fm1_port_targets(melodee 5 6a608ba122ac42293908d394e26713e31ec52fb0)
 add_executable(cartridge_sim sim/main.c)
 target_link_libraries(cartridge_sim PRIVATE fm1_protocol clipper_synth)
 target_compile_options(cartridge_sim PRIVATE -Wall -Wextra -Werror)
-foreach(test_name protocol audio_return clipper)
+foreach(test_name protocol audio_return clipper battery)
     add_executable(test_${test_name} tests/test_${test_name}.c)
     target_compile_options(test_${test_name} PRIVATE -UNDEBUG)
     target_link_libraries(test_${test_name} PRIVATE fm1_protocol clipper_synth)

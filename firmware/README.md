@@ -5,7 +5,7 @@ ESP-IDF **5.3.6** project for the cartridge's ESP32-S3 at 240 MHz. The ESP32 is 
 Two board configurations are supported:
 
 - **8 MB boards such as the XIAO ESP32-S3** (plain profiles): 8 MB flash in QIO and 8 MB octal PSRAM at 80 MHz. No such board is built or tested.
-- **ESP32-S3 Super Mini** prototype (`-4m2m` profiles): 4 MB flash in DIO at 80 MHz and 2 MB quad PSRAM at 40 MHz, with automatic PSRAM detection. This is the board the prototype uses; its circuit revision is not confirmed ([hardware](../hardware/README.md)).
+- **ESP32-S3 Super Mini** prototype (`-4m2m` profiles): 4 MB flash in QIO at 80 MHz (the in-package flash is quad, as its eFuse reports) and 2 MB quad PSRAM at 80 MHz, with automatic PSRAM detection. This is the board the prototype uses; its circuit revision is not confirmed ([hardware](../hardware/README.md)).
 
 ## Risks
 
@@ -43,8 +43,8 @@ the firmware and of flashing it.
   confirms itself only after its cartridge server has answered the FM-1; one that does so and then
   misbehaves stays the default across resets: switch away with FIRMWARE, or flash another image
   through the USB bootloader.
-- **Sloop's headroom.** The cartridge profile leaves 7,520 B free in the FM-1's application image
-  (the diagnostic build 6,736 B).
+- **Sloop's headroom.** The cartridge profile leaves 6,216 B free in the FM-1's application image
+  (the diagnostic build 5,336 B).
 
 ## Profiles
 
@@ -54,11 +54,11 @@ Each profile has its own `sdkconfig`, built from `sdkconfig.defaults` plus the p
 | --- | --- | --- | --- |
 | `midi` (default), `midi-4m2m` | Enumeration, bulk IN, MIDI parser and console | Does not transmit audio | 283,536 B (`midi-4m2m`) |
 | `tone`, `tone-4m2m` | UAC1 TX of a stereo 440 Hz sine at −20 dBFS, independent of MIDI notes | Modified Sloop with the USB return | 312,320 B (`tone-4m2m`) |
-| `clipper`, `clipper-4m2m` | 23 ported Clipper engines, queued MIDI, 64-frame render on core 1, UAC1 TX, cartridge server, the sound kept in NVS | Same, plus the render fitting its budget on the ESP32 | 761,136 B, 42% of the slot free (`clipper-4m2m`) |
-| `felucca`, `felucca-4m2m` | 13 engines of Felucca 1.7.0, one part, same path | Same; **not yet heard on hardware** | 604,688 B, 54% free (`felucca-4m2m`) |
-| `melodee`, `melodee-4m2m` | Prophet, FM6, CZ-1, SID and DRUM of Melodee 1.5.1, one part, one core | Same; **not yet heard on hardware**; the heaviest in CPU and RAM | 596,528 B, 54% free (`melodee-4m2m`) |
+| `clipper`, `clipper-4m2m` | 23 ported Clipper engines, queued MIDI, 64-frame render on core 1, UAC1 TX, cartridge server, the sound kept in NVS | Same, plus the render fitting its budget on the ESP32 | 761,600 B, 42% of the slot free (`clipper-4m2m`) |
+| `felucca`, `felucca-4m2m` | 13 engines of Felucca 1.7.0, one part, same path | Same; **not yet heard on hardware** | 605,152 B, 54% free (`felucca-4m2m`) |
+| `melodee`, `melodee-4m2m` | Prophet, FM6, CZ-1, SID and DRUM of Melodee 1.5.1, one part, one core | Same; **not yet heard on hardware**; the heaviest in CPU and RAM | 597,904 B, 54% free (`melodee-4m2m`) |
 
-Internal RAM in use (`idf.py size`, DIRAM): Clipper 150 KB, Felucca 183 KB, Melodee 228 KB of 341 KB. The rest of the large state (delay and reverb lines, sequencer pools) sits in PSRAM through the `main/*.lf` fragments ([real-time budget](#real-time-budget)). The 8 MB synthesizer profiles (`clipper`, `felucca`, `melodee`) build with the same partition table.
+Internal RAM in use (`idf.py size`, DIRAM): Clipper 150 KB, Felucca 183 KB, Melodee 251 KB (23 KB of it its per-sample loops in IRAM) of 341 KB. The rest of the large state (delay and reverb lines, sequencer pools) sits in PSRAM through the `main/*.lf` fragments ([real-time budget](#real-time-budget)). The 8 MB synthesizer profiles (`clipper`, `felucca`, `melodee`) build with the same partition table.
 
 The `midi` profile enumerates the peripheral, looks for a MIDIStreaming interface (class 1, subclass 3) and receives USB-MIDI 1.0 packets over the bulk IN. Notes and transport appear on the console; the MIDI clock is counted and printed once per second so as not to saturate the UART. The audio profiles count the notes too and print one line a second, so the console never holds up a task. The console is the UART driver with a 4 KB transmit ring, without colour codes: a restart (a slot switch) waits for the ring to drain, while a panic or a watchdog prints its report straight to the UART and the last lines still in the ring before it are lost. On the Super Mini, build `midi-4m2m`: the plain `midi` profile expects 8 MB of flash and octal PSRAM and does not boot there.
 
@@ -178,7 +178,10 @@ The writer blocks on a full ring, so the ring stays nearly full: `CONFIG_FM1_UAC
 The synthesizer profiles (`sdkconfig.clipper`, `sdkconfig.felucca`, `sdkconfig.melodee`) are built for that budget:
 
 - `-O2` (`CONFIG_COMPILER_OPTIMIZATION_PERF`).
-- A 32 KB instruction cache over the flash-resident DSP code and a 64 KB data cache.
+- A 32 KB instruction cache over the flash-resident DSP code and a 64 KB data cache. The functions
+  upstream keeps in RAM on the FM-1 run from IRAM where internal RAM allows: Melodee's per-sample
+  loops (its `.dsp_text`: the Prophet and FM6 voices, the 808 drums, the effect slots and the mixer,
+  about 23 KB, `main/melodee.lf`).
 - Hot state in internal RAM. The linker fragments `main/clipper.lf`, `main/felucca.lf` and `main/melodee.lf` move to PSRAM, by symbol, only the large buffers that are accessed sequentially or rarely: the Clipper's delay, reverb and chorus lines and WAVE mipmaps; Felucca's delay and loop buffers; Melodee's sequencer pattern pool and recording lists. Voices, the engines' arena, tracks, effects and the mixer stay in internal RAM, because per-sample random access through the data cache to 40 MHz quad PSRAM is far too slow for the budget.
 - The task watchdog does not check the idle task of core 1 (`CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU1=n`), so a saturated audio task on core 1 does not make the watchdog print from an interrupt on core 0 for tens of milliseconds, which would also stall the USB host.
 
@@ -190,7 +193,9 @@ On the receiving side, the Sloop's resampler and buffer target are described in 
 
 ## Cartridge control
 
-The synthesizer profiles include the runtime server (`synth/cartridge_remote.c`, on top of the common interface `synth/fm1_synth.h`). The GLO → CARTRIDGE page of the modified Sloop sends commands, receives names and values and changes sounds without reflashing. In protocol version 3 the reply also carries the firmware name ("MELODEE OK" on the FM-1) and the synthesizer's MIDI channel, from which Sloop picks the cartridge track; the FIRMWARE parameter selects the slot that boots. A newer peer is read as far as version 3's fields go; an older one shows NO LINK.
+The synthesizer profiles include the runtime server (`synth/cartridge_remote.c`, on top of the common interface `synth/fm1_synth.h`). The GLO → CARTRIDGE page of the modified Sloop sends commands, receives names and values and changes sounds without reflashing. In protocol version 4 the reply also carries the firmware name ("MELODEE OK" on the FM-1), the synthesizer's MIDI channel, from which Sloop picks the cartridge track, and the cartridge's cell; the FIRMWARE parameter selects the slot that boots. A newer peer is read as far as version 4's fields go; an older one shows NO LINK. On the synthesizer's channel, Bank Select (CC 0 the engine, CC 32 a page of 128 presets) and Program Change load a preset as the page's knob 2 does ([CARTRIDGE.md](../docs/CARTRIDGE.md#program-change-and-bank-select)).
+
+`CONFIG_FM1_BATTERY` (off by default) reads the cell through a divider on an ADC1 pin once a second, sends its level and state to the FM-1, logs it on the UART, and fades the audio out at `CONFIG_FM1_BATTERY_CUTOFF_MV` until the next start. The Super Mini has no such divider of its own ([hardware](../hardware/README.md#battery-reading)).
 
 The `midi` and `tone` profiles do not answer the protocol (the FM-1 shows NO LINK with them), so a slot holding one of them is never confirmed and the next reset returns to the previous slot. The engine/preset configuration of the build defines the state of a firmware's first start; after that it starts with the sound it kept. Guide, limits and tests in [CARTRIDGE.md](../docs/CARTRIDGE.md).
 
@@ -207,23 +212,28 @@ Implementation references: [ESP-IDF USB Host Library 5.3.6](https://docs.espress
 
 On the ESP32:
 
+- **Open:** bring Melodee and Felucca within the 64-frame budget on the Super Mini. Melodee's
+  PROPHET peaks above it and loses audio when chords change faster than once a second; one Felucca
+  engine exceeds it, and Felucca's ANALOG counts underruns with its render within budget
+  ([bench](../docs/BENCH_TESTS.md#g4-measurements-on-the-super-mini-prototype)). AUDIO PASS MAX and
+  AUDIO GAP MAX on the CARTRIDGE page tell a heavy render from a stall around it.
 - Measure `render_max_us` for every engine on the hardware and set per-engine voice limits from
   the measurements.
 - User presets on the cartridge, beside the sound it keeps.
-- Map MIDI CC and Program Change to the cartridge's parameters and presets (CC20/MORPH are not
-  ported).
+- Map MIDI CC to the cartridge's parameters (CC20/MORPH are not ported).
 - Several parts on different channels, so more than one Sloop track can each play the cartridge,
   within the measured CPU budget.
 - An asynchronous UAC stream with a feedback endpoint, if the bench shows drift or latency the
   adaptive stream cannot absorb.
 - Update a slot over the cartridge link, from the FM-1 or a computer, without the USB bootloader.
 - More slots in the unused half of the XIAO's 8 MB flash.
-- Battery level in the cartridge protocol, once the hardware can read it.
+- Set the battery's LOW and CUTOFF thresholds from the G6 measurement of the regulator's dropout.
 
 In Sloop:
 
 - Map the HOME knobs of the cartridge track to cartridge parameters, and its PAN to the return.
 - Save the cartridge's engine and preset with a Sloop project, so a project recalls its cartridge
   sound.
+- Keep CART DELAY across power-offs, and advance the arpeggiator and rolls of the cartridge track
+  too.
 - Free flash in the cartridge profile before adding larger features.
-- Show the cartridge's battery level once the protocol carries it.

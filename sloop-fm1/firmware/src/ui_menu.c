@@ -9,8 +9,8 @@
 /* (2.7: USB SERIAL only in a build with the serial console, FELUCCA_CDC=1: the FM-1's build has none) */
 /* Capture-only settings are hidden in the playback-only cartridge profile.
  * Return gain is live RAM state, deliberately outside the persisted settings layout.
- * With playback (FELUCCA_UAC_RX) a USB section comes before SYSTEM: USB RETURN, CHARGE (cartridge profile) and
- * USB SERIAL (CDC builds), so that AUDIO keeps four rows at most; six tabs fit 240 pixels with SYSTEM as SYS. */
+ * With playback (FELUCCA_UAC_RX) a USB section comes before SYSTEM: USB RETURN, CHARGE and CART DELAY (cartridge
+ * profile) and USB SERIAL (CDC builds), so that AUDIO keeps four rows at most; six tabs fit 240 pixels with SYSTEM as SYS. */
 #define MI_CAPTURE (!FELUCCA_UAC_RX || FELUCCA_UAC)
 enum { MI_COLOR, MI_ZOOM, MI_ACCEL, MI_LIGHTS, MI_KEYS, MI_NOTES, MI_LOWCUT,
 #if MI_CAPTURE
@@ -26,7 +26,7 @@ enum { MI_COLOR, MI_ZOOM, MI_ACCEL, MI_LIGHTS, MI_KEYS, MI_NOTES, MI_LOWCUT,
 #if FELUCCA_UAC_RX
        MI_RETURN,
 #if FELUCCA_CARTRIDGE
-       MI_CHARGE,
+       MI_CHARGE, MI_CDELAY,
 #endif
 #if FELUCCA_CDC
        MI_SERIAL,
@@ -47,7 +47,7 @@ static const char *const MI_NAME[MI_COUNT] = {"COLOR", "ZOOM", "KNOB ACCEL", "LI
 #if FELUCCA_UAC_RX
                                               "USB RETURN",
 #if FELUCCA_CARTRIDGE
-                                              "CHARGE",
+                                              "CHARGE", "CART DELAY",
 #endif
 #if FELUCCA_CDC
                                               "USB SERIAL",
@@ -151,6 +151,13 @@ UI_SMALL static const char *mi_value(uint32_t i, uint16_t *c)
 #if FELUCCA_CARTRIDGE
     case MI_CHARGE:                                   /* the FM-1's charger with the cartridge as host (cartridge.c) */
         return cart_charge_on ? "ON" : "AUTO";
+    case MI_CDELAY: {                                 /* the cartridge track's steps early by the return (core.h) */
+        static char b[8];
+        if (!cart_delay_ms) { *c = C_DIM; return "OFF"; }
+        fmt_int(b, cart_delay_ms);
+        str_cpy(b + str_len(b), " MS", 4);
+        return b;
+    }
 #endif
 #endif
     case MI_CPU1:                                     /* the render on both cores (fx.c); live, the sound is the same */
@@ -183,7 +190,7 @@ UI_SMALL static void draw_menu(void)
 #if FELUCCA_UAC_RX
     sig += uac_rx_gain * 67867967u;
 #if FELUCCA_CARTRIDGE
-    sig += (cart_charge_on * 2u + cart_keep.off) * 57885161u;
+    sig += (cart_charge_on * 2u + cart_keep.off) * 57885161u + cart_delay_ms * 413158511u;
 #endif
 #endif
     if (!ui.force && sig == ui.menu_sig)
@@ -387,6 +394,14 @@ UI_SMALL static void mi_set(uint32_t i, int32_t s)
         cart_charge_on = (uint8_t)(s > 0 ? 1u : s < 0 ? 0u : !cart_charge_on);
         cart_charge_apply();
         break;
+    case MI_CDELAY: {                                  /* 1 ms a step, OFF .. CART_DELAY_MAX_MS; OCT+ turns it OFF and
+                                                        * back to what it was */
+        static uint8_t before = CART_DELAY_DEFAULT_MS ? CART_DELAY_DEFAULT_MS : 25u;
+        if (!s && cart_delay_ms) before = cart_delay_ms, cart_delay_ms = 0;
+        else if (!s) cart_delay_ms = before;
+        else cart_delay_ms = (uint8_t)clamp((int32_t)cart_delay_ms + (s > 0 ? 1 : -1), 0, CART_DELAY_MAX_MS);
+        break;
+    }
 #endif
 #endif
     case MI_CPU1:                                      /* right ON, left OFF; at once (the next block renders so) */

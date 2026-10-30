@@ -82,20 +82,38 @@ static void cart_draw(void)
     /* Compose each strip off-screen, then replace it without a blank pass.
      * The strips cover every pixel, including gaps, on forced page entry. */
     if (redraw) {
+        uint32_t right = 234, power = cart.online ? cart.view[CART_POWER] : CART_POWER_NONE;
         cv_begin(240, 26, C_BLACK);
-        k = page_pos(&n);                                   /* "CARTRIDGE 2/10": numbered as the other GLO pages */
-        str_cpy(b, "CARTRIDGE", sizeof b);
-        if (n > 1u) {
-            str_cpy(b + str_len(b), " ", 2); fmt_int(b + str_len(b), (int32_t)k);
-            str_cpy(b + str_len(b), "/", 2); fmt_int(b + str_len(b), (int32_t)n);
+        /* on the right, the cartridge's cell (protocol 4: "84%", amber when LOW, EMPTY at the cutoff), then
+         * "<firmware> OK": what the cartridge runs */
+        if (power != CART_POWER_NONE && (power == CART_POWER_CUTOFF || cart.view[CART_BATTERY] <= 100u)) {
+            if (power == CART_POWER_CUTOFF) str_cpy(num, "EMPTY", sizeof num);
+            else { fmt_int(num, cart.view[CART_BATTERY]); str_cpy(num + str_len(num), "%", 2); }
+            right -= text_w(&FONT_S, num);
+            cv_text(right, 3, &FONT_S, num, power >= CART_POWER_LOW ? C_AMB : C_DIM);
+            right -= 8u;
         }
-        cv_text(6, 3, &FONT_S, b, C_HI);
-        if (cart.online) {                                  /* "<firmware> OK": what the cartridge runs */
+        if (cart.online) {
             str_cpy(b, (const char *)cart.view + CART_FW_NAME, 12);
             if (!b[0]) str_cpy(b, "LINK", sizeof b);
             str_cpy(b + str_len(b), uar.active ? " OK" : " NO AUDIO", 10);   /* (the stream stopped: replug) */
         } else str_cpy(b, "NO LINK", sizeof b);
-        cv_text(234 - text_w(&FONT_S, b), 3, &FONT_S, b, cart.online ? C_WHITE : C_DIM);
+        right -= text_w(&FONT_S, b);
+        cv_text(right, 3, &FONT_S, b, cart.online ? C_WHITE : C_DIM);
+        /* on the left, "CARTRIDGE 2/10" (numbered as the other GLO pages), else "CART 2/10", else "CART": the
+         * longest that ends 8 pixels before the status */
+        k = page_pos(&n);
+        for (row = 0; row < 3u; row++) {
+            str_cpy(b, row ? "CART" : "CARTRIDGE", sizeof b);
+            if (n > 1u && row < 2u) {
+                str_cpy(b + str_len(b), " ", 2); fmt_int(b + str_len(b), (int32_t)k);
+                str_cpy(b + str_len(b), "/", 2); fmt_int(b + str_len(b), (int32_t)n);
+            }
+            if (6u + text_w(&FONT_S, b) + 8u <= right) {
+                cv_text(6, 3, &FONT_S, b, C_HI);
+                break;
+            }
+        }
         cv_blit(0, 0);
         for (row = 0; row < 4u; row++) {
             cv_begin(240, CART_ROW_H, C_BLACK);

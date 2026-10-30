@@ -44,7 +44,7 @@ Clipper adapter also exports the same calls as named functions (`clipper_synth_i
 | Call | Behaviour in the three ports |
 | --- | --- |
 | `init(rate)` | 44,100 Hz only; any other rate returns `-1` and keeps the current state |
-| `midi(status, data1, data2)` | Queues channel messages (notes, pressure, control change, pitch bend) and `F8/FA/FB/FC`; `FF` and CC 120 run panic; CC 123 to 127 on the instrument's channel let go of its notes (`release`; in Clipper, upstream's own handling). Program Change returns `-1`; Clipper also rejects CC 20 (MORPH), which its UI drives. Returns `0` accepted, `-1` invalid or unsupported (or before `init`), `-2` queue full |
+| `midi(status, data1, data2)` | Queues channel messages (notes, pressure, control change, pitch bend) and `F8/FA/FB/FC`; `FF` and CC 120 run panic; CC 123 to 127 on the instrument's channel let go of its notes (`release`; in Clipper, upstream's own handling). Program Change returns `-1` (the cartridge server takes Program Change and Bank Select before the adapter: `cartridge_remote_midi`); Clipper also rejects CC 20 (MORPH), which its UI drives. Returns `0` accepted, `-1` invalid or unsupported (or before `init`), `-2` queue full |
 | `render(stereo, frames)` | Interleaved stereo PCM16, any frame count including zero; the DSP keeps its 32-frame blocks, so the output does not depend on how the caller splits the calls. Silence before `init` and after panic, until a new Note On |
 | `panic()` | Ends voices, queued events, held notes and effect tails; keeps the selected sound |
 | `release()` | Every sounding note lets go at the next block, as a note-off would (upstream's per-track release request, `panic_req`, with the arpeggiator, KBD HOLD and the MIDI note owners); a note-on still in the queue is dropped with them (upstream lets go before it drains the queue, so it would start after the release); tails, the rest of the queue and the sound kept. The cartridge server calls it on a MIDI CH change |
@@ -110,7 +110,8 @@ Common to the three ports:
 - The USB device driver (the cartridge is the USB host), UART MIDI and MIDI out.
 - Flash access, OTA, the boot loader and the register HAL.
 - The AC7911 second core.
-- Program Change, which upstream handles in the UI.
+- Program Change as upstream's UI handles it; the cartridge server maps Bank Select and Program
+  Change to its own engines and presets instead ([CARTRIDGE.md](CARTRIDGE.md#program-change-and-bank-select)).
 - The other parts of the instrument: each port renders one part, with no per-channel
   multitimbrality.
 
@@ -165,14 +166,15 @@ variants for the Super Mini prototype with 4 MB of flash and 2 MB of quad PSRAM)
 profiles build with `-O2`, a 32 KB instruction cache and a 64 KB data cache, and keep the hot
 synthesis state (voices, engines, tracks, effect state) in internal RAM. Only buffers that are
 large and read sequentially, or not touched per sample, go to PSRAM: random per-sample access to
-40 MHz quad PSRAM through the data cache is too slow for the budget.
+quad PSRAM through the data cache is too slow for the budget. Melodee's per-sample loops, which
+upstream keeps in RAM on the FM-1, run from IRAM.
 
 | ESP-IDF 5.3.6 build | Clipper | Felucca | Melodee |
 | --- | --- | --- | --- |
 | In PSRAM | The large delay and wavetable buffers (`firmware/main/clipper.lf`) | The large delay and loop buffers (`firmware/main/felucca.lf`) | The sequencer's pattern pool and recording lists (`firmware/main/melodee.lf`) |
 | In internal RAM | Voice, engine, track and effect state | Voice, engine (`eng_mem`), track and effect state | The audio arena (engine voice state and the shared effect rack), voices, tracks and mixer |
-| Image, `-4m2m` profile | 761,136 B (42% of a 1.25 MB slot free) | 604,688 B (54% free) | 596,528 B (54% free) |
-| Internal RAM (DIRAM) used | 150 KB of 341 KB | 183 KB of 341 KB | 228 KB of 341 KB |
+| Image, `-4m2m` profile | 761,600 B (42% of a 1.25 MB slot free) | 605,152 B (54% free) | 597,904 B (54% free) |
+| Internal RAM (DIRAM) used | 150 KB of 341 KB | 183 KB of 341 KB | 251 KB of 341 KB |
 
 Observed on hardware: Clipper notes from the FM-1 keyboard play through the FM-1 with a clean
 sound; the MIDI channel filter keeps the FM-1's other tracks on their internal sound; the

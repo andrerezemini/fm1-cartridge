@@ -52,6 +52,11 @@ shows the FM-1's own level while the cartridge is plugged in, since the cartridg
 2. Wait for the name of the running firmware at the top right: **CLIPPER OK**, **MELODEE OK** or
    **FELUCCA OK**. **NO LINK** means no reply has arrived yet, and **NO AUDIO** after the name means
    the cartridge answers but its audio stream has stopped; see [Troubleshooting](#troubleshooting).
+3. A cartridge built to read its cell ([hardware](../hardware/README.md#battery-reading)) shows its
+   level on the right, "84%". It turns amber when the cell is low, and the FM-1 says CARTRIDGE
+   BATTERY LOW once, on any page. At the cutoff the cartridge fades its sound out, the header reads
+   EMPTY and the FM-1 says CARTRIDGE BATTERY EMPTY: switch it off and charge it. To leave room on
+   the right the title then reads "CART 2/10", or "CART".
 
 ## 5. Play the cartridge
 
@@ -89,6 +94,14 @@ On the PRESETS page (one of the SAVE pages), **KNOB 1** steps presets and **KNOB
 A new preset fades out what was sounding in a few milliseconds and leaves the delay and reverb
 tails ringing; the next notes play the new sound.
 
+**From a MIDI controller or another sequencer.** Send a Program Change into the FM-1's MIDI input on
+the cartridge track's channel. Sloop passes it to the cartridge instead of loading one of its own
+sounds into the track, and the names update a moment later. The Program Change picks a preset of
+the current engine (0 the first); send **CC 0** before it to pick the engine too (0 the first, in
+the order of knob 1 on the CARTRIDGE page), and **CC 32** = 1 to reach presets 128 and up (Melodee's
+Prophet has 201). For example, CC 0 = 2 and then Program Change 5 load the sixth preset of the third
+engine. A number the cartridge does not have changes nothing.
+
 | Firmware | Engines | Factory presets |
 | --- | ---: | ---: |
 | Clipper | 23 | 407 |
@@ -119,9 +132,12 @@ the parameter, wait for the new name before turning KNOB 4. A new preset keeps K
 parameter when the new sound has it, and otherwise moves it to the synthesizer's first parameter,
 never to MIDI CH or FIRMWARE. On the other pages the four knobs control Sloop again.
 
-The last two entries only show figures: **AUDIO RENDER MAX**, the longest the cartridge took to
-compute 64 frames since the page was opened, against the 1,451 µs those frames last, and **AUDIO
-UNDERRUNS**, the times its audio fell behind since then.
+The last four entries only show figures, counted since the page was opened: **AUDIO RENDER MAX**,
+the longest the cartridge took to compute 64 frames, against the 1,451 µs those frames last;
+**AUDIO PASS MAX**, the longest round of its audio loop (MIDI, a knob's request and the render),
+against the same 1,451 µs; **AUDIO GAP MAX**, the longest wait between two blocks it handed to the
+USB stream, against the 11.6 ms of audio its buffer holds; and **AUDIO UNDERRUNS**, the times its
+audio fell behind. Opening the page starts them again.
 
 The cartridge keeps its sound for each firmware: the engine, the preset, MIDI CH and the edits are
 saved a few seconds after the last change, once nothing plays, and come back at the next start or
@@ -163,6 +179,13 @@ The cartridge track records and plays like any Sloop track.
 A take keeps the notes, not the cartridge's sound. When the project plays later, the cartridge
 plays them with whatever sound it has at that moment.
 
+**Line up the timing.** The cartridge's sound comes back a little after the FM-1's own tracks, so
+its steps can sound late against the drums. Hold **HOME**, go to the **USB** section and turn
+**KNOB 3, CART DELAY**: the cartridge track's steps go out that many milliseconds early, from OFF to
+50 ms (at most half a step early). Raise it until a step on the cartridge track lands with the
+kick on the same step. Live keys, the arpeggiator and rolls are not moved. CART DELAY goes back to
+OFF every time the FM-1 starts; OCT+ on the row turns it off and back to its value.
+
 ## 10. Choose which track plays the cartridge
 
 The first parameter of the CARTRIDGE page, **MIDI CH**, sets the channel the cartridge listens to.
@@ -199,7 +222,9 @@ charger back on (CHARGE starts at ON).
 | A note keeps sounding | Turn PRESET to the next preset and back: the cartridge ends every voice (the page's edits go back to the preset's values). Muting and unmuting the track ends the notes Sloop knows it sent. Unplugging ends every voice. |
 | FIRMWARE reads **PLAYING** | The FM-1 holds notes or its transport runs: stop it and release the keys. |
 | A slot reads **<NAME> FAIL** | That firmware started and never answered the FM-1 last time; its log on the cartridge's UART says why ([firmware](../firmware/README.md)). |
-| Gaps or a stuttering note | The engine or preset may be too heavy for the ESP32: **AUDIO RENDER MAX** on the CARTRIDGE page above 1,451 µs, or AUDIO UNDERRUNS counting, says so. Try a lighter one or fewer notes at once. |
+| Gaps or a stuttering note | The engine or preset may be too heavy for the ESP32: **AUDIO RENDER MAX** on the CARTRIDGE page above 1,451 µs, or AUDIO UNDERRUNS counting, says so. A PASS MAX well above the RENDER MAX points at something other than the sound itself, and a GAP MAX above 11.6 ms at a stall the buffer could not cover. Try a lighter one or fewer notes at once. |
+| The cartridge's steps sound late | Set CART DELAY (HOME → USB, KNOB 3) to the delay you hear. |
+| **EMPTY** in the header, no sound | The cartridge reached its cell's cutoff and faded out: switch it off and charge the cell. |
 | The FM-1 does not charge | CHARGE at AUTO holds the charger off while the cartridge answers. Set CHARGE to ON, or unplug the cartridge. |
 | The last edits are gone | The cartridge saves its sound a few seconds after the last change, once nothing plays; a restart or a firmware switch before that keeps the sound saved earlier. |
 
@@ -207,10 +232,11 @@ charger back on (CHARGE starts at ON).
 
 | Control | With the cartridge |
 | --- | --- |
-| Hold **HOME** → **USB** | USB RETURN level (KNOB 1) and CHARGE (KNOB 2); OCT− closes |
+| Hold **HOME** → **USB** | USB RETURN level (KNOB 1), CHARGE (KNOB 2) and CART DELAY (KNOB 3); OCT− closes |
 | **GLO** → **CARTRIDGE** | Engine, preset, parameter and value on KNOB 1 to 4; firmware name, NO AUDIO or NO LINK |
 | **ALGORITHM** | Selects the track; the cartridge track plays the cartridge |
 | **PRESETS** | On the cartridge track: the cartridge's presets, across engines |
+| MIDI in: **CC 0**, **CC 32**, **Program Change** | On the cartridge track's channel: the cartridge's engine, page of 128 and preset |
 | **TRACKS** LEVEL, MUTE | The cartridge track's LEVEL and MUTE set the USB return |
 | **KNOB 3 = FIRMWARE**, **KNOB 4** | Switch firmware slot, 2 s after the knob stops, with the transport stopped |
 | **KNOB 3 = MIDI CH**, **KNOB 4** | Which channel, and so which track, plays the cartridge |

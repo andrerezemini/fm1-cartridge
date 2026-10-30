@@ -230,6 +230,22 @@ static void cart_tracks_block(void)
     }
     ct_seen = (uint8_t)now;
 }
+/* MIDI in: a Program Change, or a Bank Select before it (CC 0, CC 32), for a cartridge track goes to the cartridge on
+ * the track's channel (CC 0 picks its engine, CC 32 a page of 128 presets, the Program Change the preset); the track's
+ * own sound, silent, stays. The main loop then asks the cartridge for its new names (cartridge.c cart_program_ms) */
+static int cart_program(const track_t *t, uint32_t st, uint32_t d1, uint32_t d2)
+{
+    uint32_t ch;
+    if (!t || !CART_TRACK(t) || (ch = trk_midi_ch(trk_index(t))) > 15u)
+        return 0;
+    if (st == 0xC0u) {
+        midi_out_event(0x0Cu | (0xC0u | ch) << 8 | d1 << 16);
+        cart_program_ms = fm1_ms | 1u;
+    } else {
+        midi_out_event(0x0Bu | (0xB0u | ch) << 8 | d1 << 16 | d2 << 24);
+    }
+    return 1;
+}
 #endif
 static void seq_out_all_off(void)
 {
@@ -2908,8 +2924,16 @@ static void seq_ratchets(track_t *t, uint32_t into, uint32_t slen)
  * (micro >= 0), or how far before its step (micro < 0, as a negative number) */
 static int32_t micro_units(const track_t *t, uint32_t abs, uint32_t slen)
 {
-    int32_t m = t->micro[abs % trk_len(t) % NSTEP];
-    return (int32_t)(slen / 64u) * m;                /* |m| <= 32: fits */
+    int32_t m = t->micro[abs % trk_len(t) % NSTEP], u = (int32_t)(slen / 64u) * m;   /* |m| <= 32: fits */
+#if FELUCCA_CARTRIDGE
+    if (cart_delay_ms && CART_TRACK(t)) {            /* CART DELAY: a cartridge track's step that much early, at
+                                                      * most half a step (as the earliest nudge) */
+        u -= (int32_t)((uint32_t)cart_delay_ms * FS / 1000u * (uint32_t)song.g[G_BPM]);
+        if (u < -(int32_t)(slen / 2u))
+            u = -(int32_t)(slen / 2u);
+    }
+#endif
+    return u;
 }
 
 /* The steps fire in order, one a block at most, each at its nudged time (micro: 1/64 of a step early
@@ -3583,6 +3607,10 @@ static void events_block(uint32_t n)
                                                        * track (notes and CCs); every other channel ignored */
             if (ch != (uint32_t)song.g[G_ROUTE] - 2u)
                 continue;
+#if FELUCCA_CARTRIDGE
+            if ((st == 0xC0u || (st == 0xB0u && (d1 == 0u || d1 == 32u))) && cart_program(TSEL, st, d1, d2))
+                continue;                             /* (the selected track is the cartridge's) */
+#endif
             if (st == 0xB0u) {
                 if (d1 == 0u) {                       /* (2.7.2) Bank Select: latched for the next Program Change */
                     ch_bank[ch & 15u] = (uint8_t)d2;
@@ -3613,6 +3641,11 @@ static void events_block(uint32_t n)
                 midi_sel_set(ch, d1, 0);
             }
         } else {
+#if FELUCCA_CARTRIDGE
+            if ((st == 0xC0u || (st == 0xB0u && (d1 == 0u || d1 == 32u))) && !song.g[G_ROUTE] &&
+                cart_program(midi_track(ch), st, d1, d2))
+                continue;                                 /* (the track its channel plays is the cartridge's) */
+#endif
             if (st == 0xB0u) {                            /* a CC (IN = CLOCK: none) */
                 if (d1 == 0u) {                           /* (2.7.2) Bank Select: latched for the next Program Change */
                     ch_bank[ch & 15u] = (uint8_t)d2;

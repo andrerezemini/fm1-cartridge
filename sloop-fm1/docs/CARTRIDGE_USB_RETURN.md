@@ -30,7 +30,7 @@ PCM signed 16-bit little-endian, two channels, 44,100 Hz. There is no feedback e
 The experimental profile with capture uses 0x84 IN and 0x04 OUT at the same time. Its
 descriptors and EP0 are exercised in simulation only, and duplex operation on the physical
 controller is not established; the cartridge build with capture as well (`FELUCCA_UAC=1`) fits
-the application slot with 772 B free. Use the dedicated profile.
+the application slot with 848 B free. Use the dedicated profile.
 
 ## Controls on the FM-1
 
@@ -41,7 +41,12 @@ the application slot with 772 B free. Use the dedicated profile.
    restarting restores 100%.
 4. **KNOB 2 / CHARGE** selects **ON** (the default) or **AUTO** for the FM-1's internal charger
    while the cartridge is the host (section below). Also RAM-only.
-5. The master, limiter and global effects stay in the audio path.
+5. **KNOB 3 / CART DELAY** sends the cartridge track's steps early by the return's latency, from
+   OFF to 50 ms in 1 ms steps; OCT+ turns it off and back. RAM-only: every start restores
+   `CART_DELAY_DEFAULT_MS` (`core.h`, 0 until the bench has measured the latency). The step fires
+   that much before its grid time, at most half a step early as the earliest nudge
+   (`seq.c` `micro_units`); live keys, the arpeggiator and rolls are not advanced.
+6. The master, limiter and global effects stay in the audio path.
 
 The return is a single stereo signal, summed once on core 0 after the sum of the cores and
 before the global effects and limiter. It does not create a fifth track, does not change the
@@ -65,8 +70,10 @@ is unity), MIDI EXPRESSION (CC 11, as on any track) and MUTE, and feeds the trac
 return's peak; a sample's note its engine had waiting for a voice's fade is dropped at the takeover.
 The notes a player holds on the cartridge track behave as on any track: the sequencer neither
 restarts nor ends them, and a note-off lost on a full MIDI input ring ends the notes MIDI held,
-which then end on the cartridge too. A MIDI Program Change (with its Bank Select) received for the
-cartridge track changes the track's own, silent sound, not the cartridge's preset. The cartridge's polyphony
+which then end on the cartridge too. A MIDI Program Change received for the cartridge track, and
+the Bank Select before it (CC 0, CC 32), go to the cartridge on the track's channel instead of
+loading a sound into the track (`seq.c` `cart_program`); 20 ms later the main loop queries the
+cartridge for its new names (`cartridge.c` `cart_program_ms`). The cartridge's polyphony
 depends on the firmware it runs. Sloop's knobs do not send CC. While the cartridge answers, CLOCK
 OUT runs even at OFF (`seq.c` `clkout_block`), unless SYNC follows an external clock.
 `cart_quiet` holds the autosave and the section saves, whose flash erase runs with the interrupts
@@ -78,8 +85,11 @@ off, while a cartridge track holds a note and for a second after the return last
 The GLO → CARTRIDGE page is numbered like the other GLO pages ("CARTRIDGE 2/10")
 and shows in its header the name of the firmware the cartridge runs ("CLIPPER OK",
 "MELODEE OK", "FELUCCA OK"), taken from the protocol reply (`cartridge_wire.h`,
-`F0 7D 43 46 03`: preset index and count in 14 bits, firmware name, current slot and slot
-count, MIDI channel). Knobs 1–4 select engine, preset, parameter and value. The second entry of the
+`F0 7D 43 46 04`: preset index and count in 14 bits, firmware name, current slot and slot
+count, MIDI channel, the cartridge's cell). When the cartridge reads its cell, its level follows on
+the right ("84%", amber when LOW, EMPTY at the cutoff), and the FM-1 says CARTRIDGE BATTERY LOW or
+EMPTY once, on any page. The title shortens to "CART 2/10" or "CART" so that it never meets the
+status on the right. Knobs 1–4 select engine, preset, parameter and value. The second entry of the
 parameter list, **FIRMWARE** (knob 3), lists the slots in the ESP32 flash; knob 4 picks one
 ("2/3" on the right, CURRENT on the running one) and the cartridge reboots into it two
 seconds after the knob stops. The footer explains this while FIRMWARE is selected. Without an

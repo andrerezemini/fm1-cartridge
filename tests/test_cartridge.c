@@ -83,7 +83,7 @@ int main(void)
     assert(cartridge_remote_handle(&server, q, sizeof q, p));
     assert(p[CART_STATUS] == CART_STALE && cart_u14(p + CART_PRE) == cart_u14(previous + CART_PRE));
     /* A wrong protocol, bad byte, wrong length or unsupported opcode cannot mutate. */
-    q[4] = 2; assert(!cartridge_remote_handle(&server, q, sizeof q, p)); q[4] = 3;
+    q[4] = CART_VERSION - 1; assert(!cartridge_remote_handle(&server, q, sizeof q, p)); q[4] = CART_VERSION;
     q[10] = 128; assert(!cartridge_remote_handle(&server, q, sizeof q, p)); q[10] = 0;
     q[7] = 99; assert(!cartridge_remote_handle(&server, q, sizeof q, p)); q[7] = 0;
     assert(!cartridge_remote_handle(&server, q, sizeof q - 1, p));
@@ -241,26 +241,34 @@ int main(void)
         assert(power > 100000);
         synth->panic();
     }
-    /* The platform's figures: two read-only entries at the end of the catalogue; a query starts them
-     * again before it answers. */
+    /* The platform's figures: four read-only entries at the end of the catalogue (render and pass against
+     * the block, the gap against the ring, the underruns); a query starts them again before it answers. */
     {
-        cartridge_metrics_t metrics = { 812, 1451, 3 };
+        cartridge_metrics_t metrics = { 812, 1451, 3, 990, 4200, 11609 };
         unsigned last;
         server.metrics = &metrics;
         last = cartridge_remote_param_count(&server) - 1u;
-        assert(last == own + 2u);
-        command(CART_QUERY, 0); assert(!metrics.render_us && !metrics.underruns);
-        metrics.render_us = 812; metrics.underruns = 3;
+        assert(last == own + 4u);
+        command(CART_QUERY, 0); assert(!metrics.render_us && !metrics.underruns && !metrics.pass_us && !metrics.gap_us);
+        metrics.render_us = 812; metrics.underruns = 3; metrics.pass_us = 990; metrics.gap_us = 4200;
         command(CART_PARAM, 8191);
         assert(cart_u14(p + CART_PAR) == last && !strcmp((const char *)p + CART_PAR_NAME, "AUDIO UNDERRUNS") &&
                !strcmp((const char *)p + CART_VAL_NAME, "3"));
-        command(CART_QUERY, 0);                    /* the page opened again on the figures: from 0 */
-        assert(cart_u14(p + CART_PAR) == last && !strcmp((const char *)p + CART_VAL_NAME, "0"));
-        metrics.render_us = 812; metrics.underruns = 3;
         command(CART_PARAM, -1);
+        assert(!strcmp((const char *)p + CART_PAR_NAME, "AUDIO GAP MAX") && !strcmp((const char *)p + CART_VAL_NAME, "4200 US") &&
+               !strcmp((const char *)p + CART_UNIT, "/11609"));
+        command(CART_PARAM, -1);
+        assert(!strcmp((const char *)p + CART_PAR_NAME, "AUDIO PASS MAX") && !strcmp((const char *)p + CART_VAL_NAME, "990 US") &&
+               !strcmp((const char *)p + CART_UNIT, "/1451"));
+        command(CART_PARAM, 1);
+        command(CART_QUERY, 0);                    /* the page opened again on the figures: from 0 */
+        assert(cart_u14(p + CART_PAR) == last - 1u && !strcmp((const char *)p + CART_VAL_NAME, "0 US"));
+        metrics.render_us = 812; metrics.underruns = 3;
+        command(CART_PARAM, -2);
         assert(!strcmp((const char *)p + CART_PAR_NAME, "AUDIO RENDER MAX") && !strcmp((const char *)p + CART_VAL_NAME, "812 US") &&
                !strcmp((const char *)p + CART_UNIT, "/1451"));
         assert(command_status(CART_VALUE, 1) == CART_BAD_REQUEST && cartridge_remote_param_set(&server, last, 0) == -1);
+        for (unsigned k = 0; k < 4u; ++k) assert(cartridge_remote_param_set(&server, last - k, 0) == -1);
         server.metrics = NULL;
         command(CART_PARAM, -8192);
     }
@@ -386,6 +394,67 @@ int main(void)
         cartridge_remote_init(&server, synth, &fake_slots, 99);
     }
 
+    /* Program Change and Bank Select on the synth's channel pick the sound as the page does: CC 0 the engine,
+     * CC 32 the page of 128 presets; a Program Change alone stays in the current engine and its page. Each
+     * one is a new revision, so a page request made before it is stale. */
+    {
+        unsigned e = synth->engine_count() - 1u, n = synth->preset_count(e), last = (n < 128u ? n : 128u) - 1u;
+        assert(synth->init(44100) == 0 && !synth->set_midi_channel(2) && synth->set_preset(0, 0) == 0);
+        command(CART_QUERY, 0);
+        uint16_t rev = server.revision;
+        server.changed = 0;
+        assert(cartridge_remote_midi(&server, 0xC1, 1, 0) == 1);
+        assert(synth->current_engine() == 0 && synth->current_preset() == 1 && server.changed && !server.cached &&
+               server.revision == ((rev + 1u) & 16383u));
+        cart_header(q, ++seq, CART_PRESET, rev); cart_put14(q + CART_ARG, 1 + 8192); q[sizeof q - 1] = 0xf7;
+        assert(cartridge_remote_handle(&server, q, sizeof q, p) && p[CART_STATUS] == CART_STALE &&
+               cart_u14(p + CART_PRE) == 1 && synth->current_preset() == 1);
+        /* another channel, and every other message, go to the synth */
+        assert(!cartridge_remote_midi(&server, 0xC0, 2, 0) && !cartridge_remote_midi(&server, 0xB0, 0, 1) &&
+               synth->current_preset() == 1);
+        assert(!cartridge_remote_midi(&server, 0xB1, 7, 100) && !cartridge_remote_midi(&server, 0x91, 60, 100) &&
+               !cartridge_remote_midi(&server, 0xB1, 123, 0));
+        synth->panic();
+        /* CC 0 only waits for the Program Change */
+        assert(cartridge_remote_midi(&server, 0xB1, 0, (uint8_t)e) == 1 && synth->current_engine() == 0);
+        assert(cartridge_remote_midi(&server, 0xC1, (uint8_t)last, 0) == 1);
+        assert(synth->current_engine() == e && synth->current_preset() == last);
+        command(CART_QUERY, 0); assert(p[CART_ENG] == e && cart_u14(p + CART_PRE) == last);
+        assert(cartridge_remote_midi(&server, 0xC1, 0, 0) == 1 && synth->current_engine() == e && synth->current_preset() == 0);
+        /* an engine or a program that does not exist changes nothing, and the bank is spent */
+        rev = server.revision;
+        assert(cartridge_remote_midi(&server, 0xB1, 0, 127) == 1 && cartridge_remote_midi(&server, 0xC1, 0, 0) == 1);
+        assert(synth->current_engine() == e && synth->current_preset() == 0 && server.revision == rev);
+        if (n < 128u) {
+            assert(cartridge_remote_midi(&server, 0xC1, (uint8_t)n, 0) == 1);
+            assert(synth->current_preset() == 0 && server.revision == rev);
+        }
+        /* past 128 presets (Melodee's Prophet): CC 32 picks the page, a Program Change alone keeps it */
+        for (unsigned k = 0; k < synth->engine_count(); ++k) {
+            if (synth->preset_count(k) <= 129u) continue;
+            assert(cartridge_remote_midi(&server, 0xB1, 0, (uint8_t)k) && cartridge_remote_midi(&server, 0xB1, 32, 1) &&
+                   cartridge_remote_midi(&server, 0xC1, 0, 0));
+            assert(synth->current_engine() == k && synth->current_preset() == 128);
+            assert(cartridge_remote_midi(&server, 0xC1, 1, 0) && synth->current_preset() == 129);
+            assert(cartridge_remote_midi(&server, 0xB1, 0, (uint8_t)k) && cartridge_remote_midi(&server, 0xC1, 2, 0) &&
+                   synth->current_preset() == 2);
+            printf("%s: CC 32 reaches preset 129 of %s\n", synth->name, synth->engine_name(k));
+            break;
+        }
+        /* OMNI: every channel */
+        assert(!synth->set_midi_channel(0));
+        assert(cartridge_remote_midi(&server, 0xC9, 1, 0) == 1 && synth->current_preset() == 1);
+        synth->panic();
+    }
+    /* Protocol 4 carries the cell as the platform sets it; out of range reads as no reading. */
+    command(CART_QUERY, 0);
+    assert(p[CART_BATTERY] == CART_BATTERY_NONE && p[CART_POWER] == CART_POWER_NONE && p[CART_REPLY_SIZE - 1] == 0xf7);
+    server.battery = 64; server.power = CART_POWER_LOW;
+    command(CART_QUERY, 0); assert(p[CART_BATTERY] == 64 && p[CART_POWER] == CART_POWER_LOW);
+    server.battery = 101; server.power = 9;
+    command(CART_QUERY, 0); assert(p[CART_BATTERY] == CART_BATTERY_NONE && p[CART_POWER] == CART_POWER_NONE);
+    wire_roundtrip(p, sizeof p);
+
     /* The state record: a sound with edits and a MIDI channel comes back after a fresh start, and a
      * record from elsewhere (another synth or revision, short, malformed) changes nothing. */
     {
@@ -416,7 +485,7 @@ int main(void)
         assert(cartridge_state_apply(synth, &a, 3) == -1 && cartridge_state_capture(synth, &c) == nb &&
                cartridge_state_equal(&b, nb, &c, nb));
     }
-    printf("cartridge server: %u presets, %u parameter ranges, idempotence, stale guard, SysEx, PCM, FIRMWARE slots, the busy guard, the kept entry, the MIDI CH release and the state record passed\n",
+    printf("cartridge server: %u presets, %u parameter ranges, idempotence, stale guard, SysEx, PCM, FIRMWARE slots, the busy guard, the kept entry, the MIDI CH release, Program Change and Bank Select, the battery fields and the state record passed\n",
            presets, parameters);
     return 0;
 }

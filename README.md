@@ -175,9 +175,9 @@ connection is not a universal Type-C host port.
 
 The ports keep 44.1 kHz, one stereo output and each upstream engine's voices (8 shared voices in
 Clipper and Felucca; in Melodee, the single-core budget: a 5-voice Prophet and a 16-voice FM6).
-They play one part of each instrument and do not port the original UIs, user presets, editors,
-Program Change or CC20/MORPH. The build sets a firmware's first sound; the CARTRIDGE page edits it
-live and the cartridge keeps it.
+They play one part of each instrument and do not port the original UIs, user presets, editors or
+CC20/MORPH. The build sets a firmware's first sound; the CARTRIDGE page edits it live, Bank Select
+and Program Change pick it from MIDI, and the cartridge keeps it.
 
 ## Not yet understood
 
@@ -194,15 +194,16 @@ Parts of the electrical design are still open, so no circuit here is a proven de
 ## Future work
 
 - **Hardware:** a dedicated board with a proper USB-C source port, a VBUS load switch and a power
-  path without back-feed; battery monitoring with a low-battery shutdown; a regulator that keeps
+  path without back-feed; battery monitoring on the board (the firmware already reads an optional
+  divider); a regulator that keeps
   3V3 in specification over the whole cell range; a tested enclosure
   ([hardware](hardware/README.md#future-hardware-work)).
-- **ESP32 firmware:** measured voice limits per engine, user presets, MIDI CC and Program
-  Change, several parts on different channels, slot updates over the cartridge link
+- **ESP32 firmware:** measured voice limits per engine, user presets, MIDI CC mapped to the
+  cartridge's parameters, several parts on different channels, slot updates over the cartridge link
   ([firmware](firmware/README.md#future-firmware-work)).
 - **Sloop:** HOME knobs mapped to cartridge parameters on the cartridge track, the track's PAN on
-  the return, the cartridge's sound saved with a project, and the cartridge's battery level on the
-  FM-1.
+  the return, the cartridge's sound saved with a project, and CART DELAY kept across power-offs
+  once the bench has measured the return's latency.
 
 ## Repository map
 

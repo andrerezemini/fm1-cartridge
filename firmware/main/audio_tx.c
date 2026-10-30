@@ -21,6 +21,7 @@
 #include "usb_midi_host.h"
 #include "slots.h"
 #include "esp_random.h"
+#include "fm1/battery.h"
 #if CONFIG_FM1_AUDIO_CLIPPER
 #include "clipper_synth.h"
 #define SYNTH_API clipper_synth_api
@@ -41,6 +42,7 @@
 #define QUIET_SAVE_US 5000000            /* the sound is kept once nothing changed for this long and nothing plays */
 #define NOTE_QUIET_US 2000000            /* ... and no note started or ended for this long (release tails) */
 #define HELD_EXPIRY_US 60000000          /* a note held this long without any other note event: a lost note-off */
+#define CUTOFF_FADE_FRAMES 4410u         /* the audio fades out over 100 ms at the battery's cutoff */
 
 static const char *TAG = "audio_tx";
 static TaskHandle_t audio_task_handle;
@@ -52,7 +54,7 @@ static fm1_audio_stats_t stats;
 typedef struct { uint8_t frame[CART_REQUEST_SIZE]; uint32_t session; } remote_request_t;
 static QueueHandle_t remote_queue;
 static cartridge_remote_t remote;
-static cartridge_metrics_t metrics;      /* the page's AUDIO RENDER MAX / AUDIO UNDERRUNS, since it opened */
+static cartridge_metrics_t metrics;      /* the page's AUDIO RENDER / PASS / GAP MAX and UNDERRUNS, since it opened */
 static const fm1_synth_api_t *synth;
 static volatile bool answered;
 /* the record handed to the main loop (persist_ready set), and the last one kept; persist_retry: the
@@ -61,6 +63,7 @@ static cartridge_state_t pending_state, kept_state;
 static size_t pending_size, kept_size;
 static bool persist_ready, persist_retry;
 #define SAVE_TRIES 3u
+static uint32_t battery_reading;         /* the main loop's last reading in mV, 0 once taken */
 #endif
 
 typedef enum { AUDIO_CONNECT, AUDIO_GONE, AUDIO_ERROR } control_kind_t;
@@ -258,7 +261,13 @@ static void audio_task(void *arg)
     if (kept_size && cartridge_state_apply(synth, &kept_state, kept_size) != 0) kept_size = 0;
     cartridge_remote_init(&remote, synth, fm1_slots(), (uint16_t)esp_random());
     remote.metrics = &metrics;
+#if CONFIG_FM1_BATTERY
+    fm1_battery_t battery;
+    fm1_battery_init(&battery, CONFIG_FM1_BATTERY_LOW_MV, CONFIG_FM1_BATTERY_CUTOFF_MV);
+#endif
+    uint32_t fade_gain = FM1_FADE_UNITY;    /* the cutoff's fade; at 0 the synth is silent until the next start */
     metrics.budget_us = AUDIO_FRAMES * 1000000u / AUDIO_RATE;
+    metrics.ring_us = (uint32_t)((uint64_t)CONFIG_FM1_UAC_BUFFER_BYTES / 4u * 1000000u / AUDIO_RATE);
     ESP_LOGI(TAG, "%s on core 1: engine=%s preset=%s MIDI channel=%" PRIu32 " (0 omni)%s; waiting for USB audio output",
              synth->name, synth->engine_name(synth->current_engine()),
              synth->preset_name(synth->current_engine(), synth->current_preset()), synth->midi_channel(),
@@ -282,6 +291,9 @@ static void audio_task(void *arg)
     unsigned restarts_left = 0;             /* UAC_RESTARTS per connection */
     int64_t restart_at = 0, restart_wait = 0;
     int64_t stream_t0 = 0;                  /* the underrun estimate: frames written against time since t0 */
+#if CONFIG_FM1_AUDIO_SYNTH
+    int64_t last_write = 0;                 /* (the page's AUDIO GAP MAX: when the last block was handed over) */
+#endif
     uint64_t stream_frames = 0;
     for (;;) {
         uint32_t notification = 0;
@@ -416,13 +428,31 @@ static void audio_task(void *arg)
         while (xQueueReceive(midi_queue, &midi, 0) == pdTRUE) {
             follow_midi(&midi, now);
 #if CONFIG_FM1_AUDIO_SYNTH
-            if (stream_running && synth->midi(midi.status, midi.data1, midi.data2) == -2) {
+            /* Program Change and Bank Select pick the sound, as the CARTRIDGE page does */
+            if (cartridge_remote_midi(&remote, midi.status, midi.data1, midi.data2)) continue;
+            if (stream_running && fade_gain && synth->midi(midi.status, midi.data1, midi.data2) == -2) {
                 ESP_LOGW(TAG, "Synth MIDI queue overflow: all voices released");
                 forget_notes();
             }
 #endif
         }
 #if CONFIG_FM1_AUDIO_SYNTH
+#if CONFIG_FM1_BATTERY
+        uint32_t cell = __atomic_exchange_n(&battery_reading, 0, __ATOMIC_ACQ_REL);
+        if (cell) {
+            uint8_t was = battery.state;
+            fm1_battery_reading(&battery, cell);
+            uint8_t level = fm1_battery_percent(battery.mv);
+            if (level != remote.battery || battery.state != remote.power) {
+                remote.battery = level;
+                remote.power = battery.state;
+                remote.cached = 0;
+            }
+            if (battery.state != was && battery.state >= CART_POWER_LOW)
+                ESP_LOGW(TAG, "battery %s: %" PRIu32 " mV", battery.state == CART_POWER_LOW ? "low" :
+                         "at the cutoff, fading the audio out", battery.mv);
+        }
+#endif
         /* One bounded control operation per audio pass, on the synth owner.
          * USB callbacks only copy bytes; replies travel through the MIDI task. */
         remote_request_t request;
@@ -483,7 +513,14 @@ static void audio_task(void *arg)
         if (!pending_pcm) {
             int64_t begin = esp_timer_get_time();
 #if CONFIG_FM1_AUDIO_SYNTH
-            synth->render(pcm, AUDIO_FRAMES);
+            if (fade_gain) synth->render(pcm, AUDIO_FRAMES);
+            else memset(pcm, 0, sizeof pcm);
+#if CONFIG_FM1_BATTERY
+            if (fade_gain && battery.state == CART_POWER_CUTOFF) {
+                fm1_fade_out(pcm, AUDIO_FRAMES, &fade_gain, FM1_FADE_UNITY / CUTOFF_FADE_FRAMES);
+                if (!fade_gain) synth->panic();
+            }
+#endif
 #else
             for (unsigned i = 0; i < AUDIO_FRAMES; ++i) {
                 int16_t sample = (int16_t)(3276.7f * sinf(phase));
@@ -499,6 +536,7 @@ static void audio_task(void *arg)
             stats_update(stat_render, (uint32_t)(end - begin));
 #if CONFIG_FM1_AUDIO_SYNTH
             if ((uint32_t)(end - begin) > metrics.render_us) metrics.render_us = (uint32_t)(end - begin);
+            if ((uint32_t)(end - pass_begin) > metrics.pass_us) metrics.pass_us = (uint32_t)(end - pass_begin);
 #endif
             stats_update(stat_pass, (uint32_t)(end - pass_begin));
             pending_pcm = true;
@@ -512,6 +550,11 @@ static void audio_task(void *arg)
             stats_update(stat_frames, AUDIO_FRAMES);
             /* The host's SOFs and this timer run from the same crystal: the stream has played
              * (t - t0) x 44.1 kHz frames. More than were written means the URBs ran dry. */
+#if CONFIG_FM1_AUDIO_SYNTH
+            /* the longest wait between two blocks handed over: past the ring's audio, the stream ran dry */
+            if (stream_t0 && (uint32_t)(t - last_write) > metrics.gap_us) metrics.gap_us = (uint32_t)(t - last_write);
+            last_write = t;
+#endif
             if (!stream_t0) stream_t0 = t;
             stream_frames += AUDIO_FRAMES;
             if ((uint64_t)((t - stream_t0) * AUDIO_RATE / 1000000) > stream_frames) {
@@ -574,6 +617,16 @@ void fm1_audio_persist_done(bool saved)
     __atomic_store_n(&persist_ready, false, __ATOMIC_RELEASE);
 #else
     (void)saved;
+#endif
+}
+
+void fm1_audio_battery(uint32_t mv)
+{
+#if CONFIG_FM1_AUDIO_SYNTH
+    __atomic_store_n(&battery_reading, mv, __ATOMIC_RELEASE);
+    if (audio_task_handle) xTaskNotify(audio_task_handle, NOTIFY_WAKE, eSetBits);
+#else
+    (void)mv;
 #endif
 }
 

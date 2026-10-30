@@ -22,7 +22,7 @@ PYTHON="$PWD/build/venv/bin/python" sh build-cartridge.sh
 `build-cartridge.sh` sets `FELUCCA_CARTRIDGE=1`, `FELUCCA_UAC_RX=1`, `FELUCCA_UAC=0` and
 `FELUCCA_CDC=0`. The FM-1 receives playback and keeps USB MIDI. USB capture of the master and the
 CDC console are disabled, which leaves flash for the receiver and later growth (with capture as
-well the image leaves 772 B free); the local engines, projects, OTA and TRS MIDI keep the upstream
+well the image leaves 848 B free); the local engines, projects, OTA and TRS MIDI keep the upstream
 defaults. The normal build `sh build.sh` keeps its defaults.
 `tools/build.py` also accepts `FELUCCA_UAC`, `FELUCCA_UAC_48K` and `FELUCCA_UAC_RX`, with values
 `0` or `1`. `FELUCCA_CARTRIDGE_DIAG=1 sh build-cartridge.sh` adds the receiver counters to the
@@ -49,8 +49,8 @@ no references to the ROM, register access restricted to `hal/`, loader RAM-only 
 
 | Resource | Upstream 2.8.4 | Cartridge profile | Diagnostic build | Limit |
 | --- | ---: | ---: | ---: | ---: |
-| App image | 571,776 B | **574,044 B** | 574,828 B | 581,564 B |
-| Free flash | 9,788 B | **7,520 B** | 6,736 B | |
+| App image | 571,776 B | **575,348 B** | 576,228 B | 581,564 B |
+| Free flash | 9,788 B | **6,216 B** | 5,336 B | |
 | RAM `.data + .bss` | 59,340 B | 61,292 B | 61,340 B | 98,304 B |
 | Low RAM | 22,772 B | 22,772 B | 22,772 B | 29,384 B after the RAM code |
 | Pool | 333,900 B | 333,900 B | 333,900 B | 344,064 B, at least 8,192 B free |
@@ -62,8 +62,8 @@ The loader also includes `usb.c`, so it carries the shared EP0 validations. The 
 additional memory is in normal RAM; the pool keeps its reserve.
 
 SHA-256 of the cartridge package built from this tree: `felucca.bin`
-`f24376b4b991ff7bff530e6ad571c0288aa0716e2e2e3e64f58995f885f8642a`, `felucca.fwsc`
-`0ddb903337832d496a54facc8a8741690b4430665d3ddf340fa87bcbfffe3d37`. Sources that use
+`5b746d7055317ed39b362715506c10d826fd15ef720b04d99aef63701285200e`, `felucca.fwsc`
+`42405b3af322ed4c13f279e1fb6e4d5ff9ff380f3f878be6e97b5a740269d76b`. Sources that use
 `__DATE__`/`__TIME__` change the hashes of a rebuild.
 
 ## Native tests
@@ -113,7 +113,11 @@ They cover:
   cartridge, the clock and transport with CLOCK at OFF and START on a bar line for a cartridge that
   comes back mid-song, LEVEL, MIDI EXPRESSION and MUTE on the return and the track's meter, the 5 s liveness query
   (a PRESETS turn during it kept), the query when the page is left, a signed value's knob
-  acceleration, and recovery within 4 s after each of six outages in a row.
+  acceleration, and recovery within 4 s after each of six outages in a row; a Program Change and
+  its Bank Select from MIDI in sent to the cartridge in order (by channel and with IN = CH n),
+  the query that follows, another track's loading its Sloop sound; CART DELAY's step 25 ms early,
+  never more than half a step, and its menu row; the cell's level in the header, the LOW and
+  EMPTY messages and the title shortened beside a long status.
 
 The receiver and USB use the full ASan/UBSan set. Mixer and UI repeat only the upstream exclusions
 of `shift-base` and `signed-integer-overflow`, because of the existing two's-complement DSP

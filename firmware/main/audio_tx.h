@@ -34,3 +34,6 @@ bool fm1_audio_answered(void);
  * it was written: a record not written is tried again after the next quiet seconds, up to three times). */
 bool fm1_audio_persist_pending(const char **name, const void **record, size_t *size);
 void fm1_audio_persist_done(bool saved);
+/* A reading of the cell in mV (CONFIG_FM1_BATTERY), from the main loop: the audio task filters it,
+ * reports it to the FM-1 and fades its audio out at the cutoff. */
+void fm1_audio_battery(uint32_t mv);

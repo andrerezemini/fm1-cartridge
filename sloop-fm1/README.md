@@ -1,7 +1,7 @@
 > **Cartridge profile (`build-cartridge.sh`):** USB audio playback from an ESP32-S3
 > cartridge into the mixer, the GLO → CARTRIDGE page for the cartridge's three firmwares
-> (Clipper, Melodee, Felucca), the cartridge track and HOME → USB → CHARGE. USB capture and
-> CDC are off in that profile. See [cartridge operation](docs/CARTRIDGE_USB_RETURN.md) and
+> (Clipper, Melodee, Felucca), the cartridge track, Program Change to the cartridge and
+> HOME → USB → CHARGE / CART DELAY. USB capture and CDC are off in that profile. See [cartridge operation](docs/CARTRIDGE_USB_RETURN.md) and
 > [build / validation](docs/CARTRIDGE_BUILD.md); what is observed and what is still unverified
 > on the hardware is in the cartridge project's `docs/ROADMAP.md`. The upstream installer
 > linked below does not install this build.

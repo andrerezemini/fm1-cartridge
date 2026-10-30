@@ -89,7 +89,26 @@ switch open.
 Charge the cell outside the FM-1; the FM-1 delivers no 5 V. Whether the Super Mini charges the cell
 through its own USB-C port, and at what current, depends on its unconfirmed circuit: measure the
 charge current against the cell's datasheet before relying on it, or charge the cell with a
-charger that matches its rating. The board gives the firmware no battery reading.
+charger that matches its rating. The board itself gives the firmware no battery reading.
+
+## Battery reading
+
+An optional divider lets the firmware read the cell and show it on the FM-1's CARTRIDGE page
+([CARTRIDGE.md](../docs/CARTRIDGE.md#battery)):
+
+```text
+BAT pad ── 100 kΩ ──┬── 100 kΩ ── GND
+                    └── ADC1 pin (GPIO1 by default)
+```
+
+Two equal resistors halve the cell: 4.2 V reads 2.1 V on the pin, inside the ADC's 12 dB range and
+under the 3V3 rail even when it sags. The divider draws about 21 µA: take it from the BAT pad,
+after the switch, so that it draws nothing with the cartridge switched off. Any ADC1 pin from
+GPIO1 to GPIO10 works except GPIO3, a strapping pin. Then build with `CONFIG_FM1_BATTERY=y`, `CONFIG_FM1_BATTERY_GPIO` set to the pin and
+`CONFIG_FM1_BATTERY_DIVIDER` to the ratio times 1,000 (2,000 for equal resistors). The connector's
+VBUS follows the 3V3 rail, not the cell (above), so it cannot stand in for this divider. The
+readings, the LOW and CUTOFF thresholds and the divider's own accuracy are not yet measured on
+the prototype (G6).
 
 ## Debug and flashing
 
@@ -136,8 +155,8 @@ These points of the electrical design are not fully understood. Each one holds b
 - A dedicated cartridge board: an ESP32-S3 module, a USB-C port with a CC controller acting as a
   proper source, a VBUS load switch with current limit and reverse blocking, and a power path that
   cannot back-feed the charger.
-- Battery monitoring: a divider to an ADC pin, a low-battery shutdown above the regulator's
-  dropout, and the level shown on the FM-1's CARTRIDGE page through the cartridge protocol.
+- Battery monitoring on the board itself (the [divider](#battery-reading) the firmware already
+  reads), with a low-battery shutdown above the regulator's dropout.
 - A low-dropout or buck-boost regulator, so the cell's whole range keeps 3V3 within specification.
 - A charge indicator and a charge current matched to the chosen cell.
 - An enclosure with strain relief, tested over connection cycles, that does not lever on the

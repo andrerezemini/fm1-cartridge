@@ -21,8 +21,10 @@ void cartridge_remote_init(cartridge_remote_t *r, const fm1_synth_api_t *synth, 
     memset(r, 0, sizeof *r);
     r->synth = synth; r->slots = slots; r->revision = seed & 16383u;
     r->slot_cursor = has_slots(r) ? slots->current() : 0;
+    r->battery = CART_BATTERY_NONE; r->power = CART_POWER_NONE;
+    r->bank_engine = r->bank_page = -1;
 }
-#define METRICS 2u
+#define METRICS 4u                       /* AUDIO RENDER MAX, PASS MAX, GAP MAX, UNDERRUNS */
 /* the first figure's index: past the synth's own entries */
 static uint32_t metrics_at(const cartridge_remote_t *r) { return r->synth->param_count() + (has_slots(r) ? 1u : 0u); }
 static int is_metric(const cartridge_remote_t *r, uint32_t index)
@@ -38,16 +40,19 @@ int cartridge_remote_param_get(const cartridge_remote_t *r, uint32_t index, fm1_
 {
     if (!out) return -1;
     if (is_metric(r, index)) {                     /* read-only: what the audio task measured */
+        static const char *const names[METRICS] = {"AUDIO RENDER MAX", "AUDIO PASS MAX", "AUDIO GAP MAX",
+                                                   "AUDIO UNDERRUNS"};
         const cartridge_metrics_t *m = r->metrics;
-        uint32_t v = index == metrics_at(r) ? m->render_us : m->underruns;
+        uint32_t k = index - metrics_at(r);
+        uint32_t v = k == 0 ? m->render_us : k == 1 ? m->pass_us : k == 2 ? m->gap_us : m->underruns;
         memset(out, 0, sizeof *out);
         out->value = (int16_t)(v > 8191u ? 8191u : v); out->max = 8191;
-        copy_text(out->name, index == metrics_at(r) ? "AUDIO RENDER MAX" : "AUDIO UNDERRUNS", sizeof out->name);
-        if (index == metrics_at(r)) {
-            snprintf(out->text, sizeof out->text, "%lu US", (unsigned long)m->render_us);
-            snprintf(out->unit, sizeof out->unit, "/%lu", (unsigned long)m->budget_us);
+        copy_text(out->name, names[k], sizeof out->name);
+        if (k < 3u) {                              /* times, against the block (render, pass) or the ring (gap) */
+            snprintf(out->text, sizeof out->text, "%lu US", (unsigned long)v);
+            snprintf(out->unit, sizeof out->unit, "/%lu", (unsigned long)(k == 2 ? m->ring_us : m->budget_us));
         } else {
-            snprintf(out->text, sizeof out->text, "%lu", (unsigned long)m->underruns);
+            snprintf(out->text, sizeof out->text, "%lu", (unsigned long)v);
         }
         return 0;
     }
@@ -102,6 +107,29 @@ static void keep_parameter(cartridge_remote_t *r, const fm1_param_t *before, int
         strcmp(now.name, before->name))
         r->parameter = first_own(r);
 }
+int cartridge_remote_midi(cartridge_remote_t *r, uint8_t status, uint8_t data1, uint8_t data2)
+{
+    const fm1_synth_api_t *s = r->synth;
+    unsigned kind = status & 0xF0u, channel = s->midi_channel();
+    if (kind != 0xC0u && !(kind == 0xB0u && (data1 == 0u || data1 == 32u))) return 0;
+    if (channel && (status & 0x0Fu) + 1u != channel) return 0;
+    if (kind == 0xB0u) {
+        if (data1 == 0u) r->bank_engine = data2; else r->bank_page = data2;
+        return 1;
+    }
+    unsigned engine = r->bank_engine >= 0 ? (unsigned)r->bank_engine : s->current_engine();
+    unsigned page = r->bank_page >= 0 ? (unsigned)r->bank_page : r->bank_engine >= 0 ? 0u : s->current_preset() / 128u;
+    unsigned preset = page * 128u + data1;
+    fm1_param_t before;
+    r->bank_engine = r->bank_page = -1;
+    if (engine >= s->engine_count() || preset >= s->preset_count(engine)) return 1;
+    int had = !cartridge_remote_param_get(r, r->parameter, &before);
+    if (s->set_preset(engine, preset)) return 1;
+    keep_parameter(r, &before, had);
+    r->changed = 1; r->cached = 0;                 /* the page's next request sees the new revision */
+    r->revision = (r->revision + 1) & 16383u;
+    return 1;
+}
 static void cancel_slot(cartridge_remote_t *r)
 {
     if (has_slots(r) && r->slot_cursor != r->slots->current()) { r->slot_cursor = r->slots->current(); r->slot_dirty = 1; }
@@ -148,7 +176,7 @@ int cartridge_remote_handle(cartridge_remote_t *r, const uint8_t *q, size_t n, u
         r->revision = (r->revision + 1) & 16383u;
     } else {
         if (r->metrics)                            /* the page opened (or a liveness query): the figures start again */
-            r->metrics->render_us = r->metrics->underruns = 0;
+            r->metrics->render_us = r->metrics->underruns = r->metrics->pass_us = r->metrics->gap_us = 0;
         if (is_firmware(r, r->parameter)) {        /* ... never on FIRMWARE, never with a switch armed */
             r->parameter = first_own(r);
             cancel_slot(r);
@@ -176,6 +204,8 @@ int cartridge_remote_handle(cartridge_remote_t *r, const uint8_t *q, size_t n, u
     p[CART_SLOT] = r->slots ? r->slots->current() : 0;
     p[CART_NSLOT] = r->slots ? r->slots->count() : 1;
     p[CART_MIDI_CH] = (uint8_t)(s->midi_channel() <= 16u ? s->midi_channel() : 0u);
+    p[CART_BATTERY] = r->battery <= 100u ? r->battery : CART_BATTERY_NONE;
+    p[CART_POWER] = r->power <= CART_POWER_CUTOFF ? r->power : CART_POWER_NONE;
     p[CART_REPLY_SIZE - 1] = 0xf7;
     memcpy(r->request, q, n); memcpy(r->reply, p, CART_REPLY_SIZE); r->cached = 1;
     return 1;

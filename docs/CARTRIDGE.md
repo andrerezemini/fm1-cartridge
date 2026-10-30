@@ -18,13 +18,15 @@ With the cartridge powered by its battery and connected to the FM-1:
    runs) at the top of the screen, next to "CARTRIDGE 2/10", the page's position among the GLO
    pages. **NO LINK** means the protocol has not received a reply yet; **NO AUDIO** after the name
    means the cartridge answers while its audio stream is stopped (after a USB error the ESP32
-   could not recover from: replug).
+   could not recover from: replug). When the cartridge reads its cell ([battery](#battery)), its
+   level follows on the right ("84%"). The title shortens to "CART 2/10", or "CART", whenever the
+   right side needs the room.
 
 | Control | Function |
 | --- | --- |
 | Knob 1 | Engine: 23 in Clipper, 13 in Felucca, 5 in Melodee |
 | Knob 2 | Factory preset of the current engine: 407 in Clipper, 72 in Felucca, 327 in Melodee (201 in its Prophet alone) |
-| Knob 3 | Parameter to edit, with its name and position in the list; entry 1 is **MIDI CH**, entry 2 is **FIRMWARE**, the last two are read-only figures (**AUDIO RENDER MAX**, **AUDIO UNDERRUNS**) |
+| Knob 3 | Parameter to edit, with its name and position in the list; entry 1 is **MIDI CH**, entry 2 is **FIRMWARE**, the last four are read-only figures (**AUDIO RENDER MAX**, **AUDIO PASS MAX**, **AUDIO GAP MAX**, **AUDIO UNDERRUNS**) |
 | Knob 4 | Parameter value, within its range, with its unit or name; under FIRMWARE, the slot to boot |
 | Keyboard | Keeps playing the cartridge over MIDI |
 | SELECT | Moves to the other GLO pages |
@@ -38,9 +40,14 @@ moves it to the synthesizer's first parameter, never to MIDI CH or FIRMWARE. The
 as Sloop's own (MENU → SCREEN → KNOB ACCEL): fast turns jump through the engine, preset and
 parameter lists and through numeric values; a value given by name moves one step.
 
-The figures are the ESP32's: **AUDIO RENDER MAX** is the longest render of 64 frames since the page
-was opened, against the 1,451 µs they last, and **AUDIO UNDERRUNS** the times the audio task fell
-behind the USB frames in that time (an estimate from the frames written against the time elapsed).
+The figures are the ESP32's, since the page was opened: **AUDIO RENDER MAX** is the longest render
+of 64 frames, against the 1,451 µs they last; **AUDIO PASS MAX** the longest pass of the audio loop
+(the MIDI received, one request of the page, the render), against the same budget; **AUDIO GAP MAX**
+the longest time between two blocks handed to the USB stream, against the audio its ring holds
+(11,609 µs with the default 2,048 B); and **AUDIO UNDERRUNS** the times the audio task fell behind
+the USB frames (an estimate from the frames written against the time elapsed). A render within its
+budget with a long pass or gap points at the work around the render: a request, a flash write that
+stops the caches, another task on the audio core.
 
 **Switching firmware:** knob 3 to FIRMWARE, knob 4 to the desired slot (CLIPPER, MELODEE,
 FELUCCA; "2/3" on the right, CURRENT marks the running one). Two seconds after the knob
@@ -69,7 +76,7 @@ drum track never is.
   changes while it sounds. When a track becomes a cartridge track (the link comes up, MIDI CH
   turns to its channel), an All Notes Off on its channel ends the plain MIDI notes its keys were
   holding. A note-off lost on a full MIDI OUT ring (USB not draining it) is followed by an All Notes
-  Off on that channel. A panic of the track (TOOLS → NEW, a Program Change, a user preset loaded)
+  Off on that channel. A panic of the track (TOOLS → NEW, a user preset loaded)
   ends its arpeggiator's and its pedal's notes too.
 - **Silence.** The track's internal engine renders nothing and is left out of the mix. When a
   track becomes a cartridge track its voices stop at the next audio block; when it stops being
@@ -88,6 +95,18 @@ drum track never is.
   Sloop's knobs send no CC; the cartridge's sound is edited on the CARTRIDGE page.
 - **Clock.** While the cartridge answers, Sloop sends it START, STOP and the MIDI clock even with
   GLO → MIDI → CLOCK at OFF; with SYNC (an external clock), it sends none.
+- **Program Change.** A Program Change that Sloop receives for the cartridge track (from the TRS
+  MIDI input, on the track's channel, or on the IN channel with GLO → MIDI 2 → IN = CH n and the
+  cartridge track selected) goes to the cartridge on the track's channel, with the Bank Select
+  before it (CC 0 and CC 32), instead of loading a Sloop sound into the silent track. The
+  cartridge picks its sound with them ([below](#program-change-and-bank-select)); 20 ms later Sloop
+  queries it, so the footer, TRACKS and the page show the new names.
+- **Timing.** The cartridge's audio comes back later than the FM-1's own tracks (the native model
+  of the return gives about 25 ms; the bench measures it, gate G3). **CART DELAY**, under HOME →
+  USB (KNOB 3), sends the cartridge track's steps that many milliseconds early, from OFF to 50 ms,
+  at most half a step early, as the earliest nudge. Live keys, the arpeggiator and rolls play when
+  they happen. It is RAM only and starts at `CART_DELAY_DEFAULT_MS` (0, OFF, in
+  `firmware/src/core.h`) every time the FM-1 starts; set that default to the measured latency.
 - **Saving.** Sloop's autosave and section saves erase flash with the interrupts off, which would
   cut the return: they wait while a cartridge track holds a note and for a second after the return
   last sounded.
@@ -117,31 +136,33 @@ drum track never is.
 - On hardware the page shows its handshake with the ESP32; the four knobs end to end, the
   timbres and the ESP32's performance under load are still to be verified.
 
-## Protocol (version 3)
+## Protocol (version 4)
 
 Bidirectional USB-MIDI 1.0, cable 0, MIDI IN `0x81` and OUT `0x01` of the same FM-1 interface.
 The PCM return stays on UAC `0x04`. The ESP32 configures its USB host FIFO as RX/NPTX/PTX =
 104/48/48 words.
 
 The binary contract is `core/include/fm1/cartridge_wire.h`, copied unchanged to Sloop's
-`firmware/src/cartridge_wire.h`. Every message starts with `F0 7D 43 46 03` and ends with `F7`;
+`firmware/src/cartridge_wire.h`. Every message starts with `F0 7D 43 46 04` and ends with `F7`;
 the payload contains only 7-bit bytes. This experimental namespace does not collide with Sloop's
 OTA/editor. A later version only appends fields before the `F7`: a frame with a newer version byte,
-as long or longer, is read as far as version 3's fields go; a frame with an older one is ignored.
+as long or longer, is read as far as version 4's fields go; a frame with an older one is ignored,
+so both devices must run the same release.
 
 Request: 13 bytes. A 14-bit sequence, the operation, the expected 14-bit revision and a signed
 14-bit delta with offset 8192. Operations: QUERY=0, ENGINE=1, PRESET=2, PARAM=3, VALUE=4.
-Selections and values saturate at the limits, without wrap. Reply: 123 bytes, opcode 64; the full
+Selections and values saturate at the limits, without wrap. Reply: 125 bytes, opcode 64; the full
 state: revision, status, engine index and count, preset index and count (14-bit), parameter index
 and count, value/min/max, the engine/preset/parameter/value names and unit, the name of the
 running firmware (12 bytes), the current slot with the number of slots, and the MIDI channel the
-synthesizer answers (0 for OMNI, 1 to 16), from which the FM-1 picks the cartridge track. The positions and
-capacities of the fields are in the shared header.
+synthesizer answers (0 for OMNI, 1 to 16), from which the FM-1 picks the cartridge track, and the
+cartridge's cell: its level in percent (127 without a reading) and its state (none, OK, LOW,
+CUTOFF). The positions and capacities of the fields are in the shared header.
 
 The catalogue the FM-1 scrolls through is built by the server (`synth/cartridge_remote.c`) on top
 of the synthesizers' common interface (`synth/fm1_synth.h`): entry 0 is MIDI CH, entry 1 is
 FIRMWARE when the partition table has more than one slot, and the rest are the parameters of the
-synthesizer the firmware was built with, then the two read-only figures. A value the server refuses
+synthesizer the firmware was built with, then the four read-only figures. A value the server refuses
 (an EMPTY or DAMAGED slot, Felucca's empty sample sources) is passed over in the direction of the
 turn, and a turn that finds none returns BAD_REQUEST. FIRMWARE refuses every other slot while the
 platform reports the FM-1 playing (held notes on the synthesizer's channel, or the transport
@@ -158,8 +179,9 @@ each time USB comes up and after every accepted reply, and once the cartridge ha
 USB session, a query every 5 s after those. With the page hidden and the link up, a query every
 5 s checks the link (a dead one gives the track back to Sloop's sound); with the page open, every
 reply to a knob carries the full state and nothing is polled. Re-entering the page fetches the
-real state and discards old turns; the knobs wait for that update before editing. Changes made
-through other MIDI inputs are refreshed by leaving and returning to the page. A USB disconnection
+real state and discards old turns; the knobs wait for that update before editing. A Program
+Change Sloop forwards to the cartridge is followed by a query 20 ms later. Changes made through
+other MIDI inputs are refreshed by leaving and returning to the page. A USB disconnection
 clears the status. On the ESP32, a MIDI transfer error closes the interface and opens the same
 device again up to five times (0.25 to 4 s apart), clearing the endpoints' halts first; a UAC
 transfer error restarts the stream up to three times.
@@ -183,6 +205,33 @@ cartridge, and that track becomes the cartridge track. The first parameter of th
 the notes sounding, whose note-offs would come on the old channel. Clock and transport are not
 filtered. An All Notes Off (CC 123 to 127) on the synthesizer's channel lets go of its notes too.
 The choice is kept with the other edits.
+
+## Program Change and Bank Select
+
+On the synthesizer's channel (any channel at OMNI), the cartridge picks its sound with MIDI:
+**CC 0** picks the engine (0 the first, in the order of knob 1) and **CC 32** a page of 128 presets
+for the next Program Change; the **Program Change** loads that preset of that engine, as knob 2
+does: the same fade, the same parameter kept on knob 3, a new revision (a knob turn made before it
+gets the new state instead of being applied), and the sound kept as any edit. A Program Change
+alone stays in the current engine and its page of 128, so CC 32 is only needed past the 128th
+preset (Melodee's Prophet has 201). An engine or a preset that does not exist changes nothing, and
+the Bank Select is spent with the Program Change that follows it. The synthesizers never see these
+three messages. Example: CC 0 = 2, then Program Change 5 loads the sixth preset of the third
+engine.
+
+## Battery
+
+The Super Mini gives the firmware no reading of its cell. With a divider wired from BAT+ to an ADC1
+pin ([hardware](../hardware/README.md#battery-reading)) and `CONFIG_FM1_BATTERY` set, the ESP32
+reads the cell once a second (16 calibrated samples, averaged; then a quarter of each reading into
+the level), sends its percentage and state in every reply, and logs it with the audio figures on
+the UART. **LOW** (`CONFIG_FM1_BATTERY_LOW_MV`, default 3,700 mV) shows the level in amber and says
+CARTRIDGE BATTERY LOW once, on any page; it turns back to OK 50 mV above the threshold. Five
+readings in a row under **CUTOFF** (`CONFIG_FM1_BATTERY_CUTOFF_MV`, default 3,550 mV) fade the
+audio out over 100 ms and keep it silent until the next start; the header reads EMPTY and the FM-1
+says CARTRIDGE BATTERY EMPTY. Both thresholds are placeholders until G6 measures where the
+prototype's 3V3 rail leaves its range. Without the option, the reply carries no reading and the
+page shows none.
 
 ## Diagnostic build
 

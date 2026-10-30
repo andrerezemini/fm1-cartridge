@@ -1,9 +1,10 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
-/* Cartridge protocol, version 3 (byte 4 of every frame). Shared verbatim between the
+/* Cartridge protocol, version 4 (byte 4 of every frame). Shared verbatim between the
  * ESP32 firmware (core/include/fm1) and Sloop (firmware/src); all payload bytes are MIDI 7-bit.
  * Preset index and count are 14-bit; the reply also names the running firmware and its slot
  * (CART_FW_NAME, CART_SLOT, CART_NSLOT) and the MIDI channel the synthesizer answers
- * (CART_MIDI_CH: 0 OMNI, 1..16), which tells Sloop which track the cartridge plays.
+ * (CART_MIDI_CH: 0 OMNI, 1..16), which tells Sloop which track the cartridge plays, and the
+ * cartridge's cell (CART_BATTERY: 0..100 %, CART_BATTERY_NONE without a reading; CART_POWER).
  * A later version only appends fields before the F7: a frame with a newer version byte, and as
  * long or longer, is read as far as this version's fields go (cart_request_of; Sloop's reply
  * check). A peer with an older version is ignored. */
@@ -11,18 +12,21 @@
 #define FM1_CARTRIDGE_WIRE_H
 #include <stdint.h>
 #include <stddef.h>
-#define CART_VERSION 3u
+#define CART_VERSION 4u
 #define CART_REQUEST_SIZE 13u
-#define CART_REPLY_SIZE 123u
-#define CART_USB_SIZE 164u
+#define CART_REPLY_SIZE 125u
+#define CART_USB_SIZE 168u
 enum { CART_QUERY, CART_ENGINE, CART_PRESET, CART_PARAM, CART_VALUE, CART_REPLY = 64 };
 enum { CART_OK, CART_STALE, CART_BAD_REQUEST };
+/* CART_POWER: no reading; the cell is fine; low; at the cutoff, where the cartridge has faded its audio out */
+enum { CART_POWER_NONE, CART_POWER_OK, CART_POWER_LOW, CART_POWER_CUTOFF };
+#define CART_BATTERY_NONE 127u
 enum { CART_SEQ = 5, CART_OP = 7, CART_REV = 8, CART_ARG = 10,
        CART_STATUS = 10, CART_ENG = 11, CART_NENG = 12, CART_PRE = 13, CART_NPRE = 15,
        CART_PAR = 17, CART_NPAR = 19, CART_VAL = 21, CART_MIN = 23, CART_MAX = 25,
        CART_ENG_NAME = 27, CART_PRE_NAME = 39, CART_PAR_NAME = 63,
        CART_VAL_NAME = 83, CART_UNIT = 99, CART_FW_NAME = 107, CART_SLOT = 119, CART_NSLOT = 120,
-       CART_MIDI_CH = 121 };
+       CART_MIDI_CH = 121, CART_BATTERY = 122, CART_POWER = 123 };
 static inline uint16_t cart_u14(const uint8_t *p) { return p[0] | (uint16_t)p[1] << 7; }
 static inline int16_t cart_s14(const uint8_t *p) { return (int16_t)(cart_u14(p) - 8192); }
 static inline void cart_put14(uint8_t *p, uint16_t v) { p[0] = v & 127u; p[1] = (v >> 7) & 127u; }

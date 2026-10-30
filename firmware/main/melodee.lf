@@ -1,7 +1,7 @@
 # Melodee DSP memory placement, as clipper.lf: the sequencer's pattern pool and the recording
 # lists (never touched per sample) live in external PSRAM. The audio arena (resources.c, the
 # engines' voice state and the FX slots), the tracks and the mixer stay in internal RAM: per-sample
-# random access through the data cache to 40 MHz quad PSRAM is far too slow for the render budget.
+# random access through the data cache to quad PSRAM is far too slow for the render budget.
 [scheme:melodee_psram]
 entries:
     bss -> extern_ram
@@ -24,3 +24,47 @@ entries:
         melodee_synth:recording_message (melodee_psram)
         melodee_synth:recording_watch (melodee_psram)
         melodee_synth:live_velocity (melodee_psram)
+
+# The per-sample loops upstream keeps in RAM on the FM-1 (its section ".dsp_text", which the adapter
+# drops) run from IRAM here too: the Prophet and FM6 voices, the 808 drums, the effect slots and the
+# mixer, about 23 KB. From flash they are refilled through the instruction cache on every block.
+[mapping:melodee_dsp_text]
+archive: libmain.a
+entries:
+    if FM1_AUDIO_MELODEE = y:
+        melodee_synth:dr_bd (noflash)
+        melodee_synth:dr_cb (noflash)
+        melodee_synth:dr_cl (noflash)
+        melodee_synth:dr_cp (noflash)
+        melodee_synth:dr_cy (noflash)
+        melodee_synth:dr_hat (noflash)
+        melodee_synth:dr_ma (noflash)
+        melodee_synth:dr_metal (noflash)
+        melodee_synth:dr_rs (noflash)
+        melodee_synth:dr_sd (noflash)
+        melodee_synth:dr_tom (noflash)
+        melodee_synth:fm6_dc_samples (noflash)
+        melodee_synth:fm6_eg_go (noflash)
+        melodee_synth:fm6_eg_step (noflash)
+        melodee_synth:fm6_op (noflash)
+        melodee_synth:fm6_op_fb (noflash)
+        melodee_synth:fm6_op_loop (noflash)
+        melodee_synth:fm6_op_mark1 (noflash)
+        melodee_synth:fm6_op_modern_flat (noflash)
+        melodee_synth:fm6_output (noflash)
+        melodee_synth:fm6_peg_go (noflash)
+        melodee_synth:fm6_run (noflash)
+        melodee_synth:fm6_run_into (noflash)
+        melodee_synth:fx_copy (noflash)
+        melodee_synth:fx_down (noflash)
+        melodee_synth:fx_tape (noflash)
+        melodee_synth:fx_time (noflash)
+        melodee_synth:fx_up (noflash)
+        melodee_synth:master_out (noflash)
+        melodee_synth:master_samples (noflash)
+        melodee_synth:mix_mono_dry (noflash)
+        melodee_synth:mix_mono_samples (noflash)
+        melodee_synth:p5_dc_samples (noflash)
+        melodee_synth:p5_mod_samples (noflash)
+        melodee_synth:p5_mod_zero (noflash)
+        melodee_synth:p5_samples (noflash)

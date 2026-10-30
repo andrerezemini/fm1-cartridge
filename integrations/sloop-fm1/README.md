@@ -26,7 +26,7 @@ The FM-1 runs [Sloop](https://github.com/isod89/sloop-fm1) 2.8.4 (upstream commi
   SYS); SYSTEM's tab reads SYS so that they fit the screen.
 - **GLO → CARTRIDGE page:** engine, preset, parameter and value of the cartridge's synthesizer on
   the four knobs, the running firmware's name, and the FIRMWARE parameter that picks the ESP32's
-  firmware slot; protocol version 3 in `firmware/src/cartridge_wire.h`, byte-identical to
+  firmware slot; protocol version 4 in `firmware/src/cartridge_wire.h`, byte-identical to
   [`core/include/fm1/cartridge_wire.h`](../../core/include/fm1/cartridge_wire.h). Guide in
   [docs/CARTRIDGE.md](../../docs/CARTRIDGE.md).
 - **Cartridge track:** the track on the cartridge's MIDI channel sends every note its engine would
@@ -55,8 +55,8 @@ cd .. && sh tools/test_sloop_cartridge.sh native   # Sloop's UI against the real
 ```
 
 The package's memory figures and hashes are in [manifest.json](manifest.json) and
-[CARTRIDGE_BUILD.md](../../sloop-fm1/docs/CARTRIDGE_BUILD.md): app 574,044 B of 581,564 B
-(7,520 B free); RAM, low RAM and pool within the upstream limits. Installing it on the FM-1, with
+[CARTRIDGE_BUILD.md](../../sloop-fm1/docs/CARTRIDGE_BUILD.md): app 575,348 B of 581,564 B
+(6,216 B free); RAM, low RAM and pool within the upstream limits. Installing it on the FM-1, with
 a backup of its projects and settings, is described in [docs/FLASHING.md](../../docs/FLASHING.md).
 
 ## Reproduce `sloop-fm1/` from upstream

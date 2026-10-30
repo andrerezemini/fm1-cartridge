@@ -5,8 +5,8 @@
   "upstream_tree": "be5fb45a1c282509996d64fbc4481be00aaec1a3",
   "patch": "sloop-fm1-cartridge.patch",
   "patch_format": "git diff --binary (apply with git apply on a checkout of upstream_commit)",
-  "patch_sha256": "d4fd652f415610c98571c9f93d5cec361e8486e1dd5bcbd790f37c0f255ac248",
-  "result_tree": "aed0b1047eb44f7cdbfce52f6ddc1e791a3ed193",
+  "patch_sha256": "5f560f401aba7f674282fbb2982d978734f111a188ab0be49c38a7481143b03a",
+  "result_tree": "89a370f845de32d3101648df70f6674713019ab8",
   "result_tree_note": "git tree id of sloop-fm1/ after applying the patch; equals the sloop-fm1/ directory of this repository",
   "files_added": [
     "build-cartridge.sh",
@@ -54,9 +54,9 @@
   ],
   "features": [
     "USB audio playback (UAC1, EP 0x04 OUT, PCM16 stereo 44.1 kHz) into the mixer: ring buffer, Hermite ASRC whose rate loop reads the occupancy as each DAC burst begins and keeps the rate it learned across re-primes, a start on a burst's first block at the loop's aim, a 5.8 ms fade-in at every start and a gain glide over each block; the AudioControl collection lists the streaming interfaces before MIDI, as upstream does for macOS up to 15 (bcdDevice 4.08)",
-    "HOME > USB: USB RETURN gain (OCT+ mutes and restores the level) and CHARGE (ON by default; AUTO holds the FM-1's charger off while the cartridge is the host); six menu sections, SYSTEM's tab shown as SYS",
-    "GLO > CARTRIDGE page: engine/preset/parameter/value on the four knobs with Sloop's knob acceleration, firmware name with OK / NO AUDIO, FIRMWARE slot selection; cartridge protocol version 3 (firmware/src/cartridge_wire.h), a newer peer's longer reply read as far as version 3 goes",
-    "Cartridge track: the track on the cartridge's MIDI channel sends its notes (keys, chords, arpeggiator, steps, rolls, takes) over MIDI with its engine silent, an All Notes Off when it takes the track or after a lost note-off, its LEVEL, MIDI EXPRESSION, MUTE and meter on the USB return, the clock and transport while the cartridge answers (START on the next bar line when it comes back mid-song), the cartridge's engine and preset on its screens, and PRESETS browsing the cartridge's presets",
+    "HOME > USB: USB RETURN gain (OCT+ mutes and restores the level), CHARGE (ON by default; AUTO holds the FM-1's charger off while the cartridge is the host) and CART DELAY (the cartridge track's steps sent up to 50 ms early, at most half a step, for the return's latency; RAM only, from CART_DELAY_DEFAULT_MS); six menu sections, SYSTEM's tab shown as SYS",
+    "GLO > CARTRIDGE page: engine/preset/parameter/value on the four knobs with Sloop's knob acceleration, firmware name with OK / NO AUDIO, the cartridge's battery level (amber when LOW, EMPTY at the cutoff, each said once on any page), the title shortened beside a long status, FIRMWARE slot selection; cartridge protocol version 4 (firmware/src/cartridge_wire.h), a newer peer's longer reply read as far as version 4 goes",
+    "Cartridge track: the track on the cartridge's MIDI channel sends its notes (keys, chords, arpeggiator, steps, rolls, takes) over MIDI with its engine silent, an All Notes Off when it takes the track or after a lost note-off, its LEVEL, MIDI EXPRESSION, MUTE and meter on the USB return, the clock and transport while the cartridge answers (START on the next bar line when it comes back mid-song), the cartridge's engine and preset on its screens, and PRESETS browsing the cartridge's presets, and a Program Change from MIDI in for the track, with its Bank Select (CC 0, CC 32), sent to the cartridge, followed by a query for its new names",
     "Link: probes when USB comes up and after every reply, a 5 s liveness query with the page hidden, a query when the page opens or is left (an armed FIRMWARE switch is cancelled); autosave and section saves wait while the cartridge sounds, the editor's sample-slot writes are refused while the song plays; the battery icon shows the FM-1's level with the cartridge",
     "build-cartridge.sh profile and native tests"
   ],
@@ -68,22 +68,22 @@
   },
   "package": {
     "command": "sh build-cartridge.sh",
-    "app_bytes": 574044,
+    "app_bytes": 575348,
     "app_limit_bytes": 581564,
-    "app_free_bytes": 7520,
+    "app_free_bytes": 6216,
     "main_data_bss_bytes": 61292,
     "low_ram_bytes": 22772,
     "pool_bytes": 333900,
     "pool_free_bytes": 10164,
     "fwsc_bytes": 610181,
-    "felucca_bin_sha256": "f24376b4b991ff7bff530e6ad571c0288aa0716e2e2e3e64f58995f885f8642a",
-    "felucca_fwsc_sha256": "0ddb903337832d496a54facc8a8741690b4430665d3ddf340fa87bcbfffe3d37",
+    "felucca_bin_sha256": "5b746d7055317ed39b362715506c10d826fd15ef720b04d99aef63701285200e",
+    "felucca_fwsc_sha256": "42405b3af322ed4c13f279e1fb6e4d5ff9ff380f3f878be6e97b5a740269d76b",
     "note": "sources that use __DATE__/__TIME__ change the hashes of a rebuild"
   },
   "diagnostic_package": {
     "command": "FELUCCA_CARTRIDGE_DIAG=1 sh build-cartridge.sh",
-    "app_bytes": 574828,
-    "app_free_bytes": 6736
+    "app_bytes": 576228,
+    "app_free_bytes": 5336
   },
   "shared_with_cartridge": "firmware/src/cartridge_wire.h is byte-identical to core/include/fm1/cartridge_wire.h"
 }

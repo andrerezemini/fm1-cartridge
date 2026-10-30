@@ -26,7 +26,7 @@ the charger control on the SoC.
 | --- | --- |
 | Flag | `FELUCCA_UAC_RX=1`, off in the regular build |
 | Dedicated profile | `FELUCCA_CARTRIDGE=1`, RX=1, capture=0, CDC=0; preserves MIDI, engines, saving, OTA and limiter |
-| MIDI | IF1, bulk OUT 0x01 and IN 0x81, 64 bytes; also carries the cartridge protocol, version 3, and the cartridge track's notes |
+| MIDI | IF1, bulk OUT 0x01 and IN 0x81, 64 bytes; also carries the cartridge protocol, version 4, and the cartridge track's notes and Program Changes |
 | Playback | IF `2 + FELUCCA_UAC`, alt0 no bandwidth, alt1 ISO OUT 0x04 |
 | Format | Stereo PCM16LE, 44,100 Hz, up to 180 bytes per 1 ms |
 | Synchronization | Adaptive (`bmAttributes=0x09`), no feedback endpoint |
@@ -80,8 +80,8 @@ The diagnostic build shows receiver counters in the CARTRIDGE footer
 
 Upstream and the cartridge profile build with the same toolchain. Upstream 2.8.4 leaves
 9,788 B free in the app image; the cartridge profile disables USB capture and the CDC console.
-It uses 574,044 of 581,564 bytes of the app image, with **7,520 B free** (the diagnostic build
-6,736 B; with capture as well, 772 B). Main RAM: 61,292 B; low RAM: 22,772 B; pool: 333,900 B,
+It uses 575,348 of 581,564 bytes of the app image, with **6,216 B free** (the diagnostic build
+5,336 B; with capture as well, 848 B). Main RAM: 61,292 B; low RAM: 22,848 B; pool: 333,900 B,
 preserving 10,164 B free (minimum of 8,192 B). The package
 is built at `build/felucca.fwsc` in `sloop-fm1/`.
 

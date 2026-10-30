@@ -8,7 +8,8 @@ Tap GLO and use SELECT to reach CARTRIDGE. Knobs 1/2 choose engine/preset, 3 cho
 a parameter and 4 changes its value on the ESP32. The keyboard keeps sending MIDI notes. The
 header shows the page number among the GLO pages and, once the cartridge answers, the name of the
 firmware it runs (CLIPPER OK, MELODEE OK, FELUCCA OK), or NO AUDIO after the name while the
-playback stream is at alt 0; NO LINK means there is no valid answer. The parameter FIRMWARE
+playback stream is at alt 0, and the cartridge's battery level when it reads its cell; NO LINK
+means there is no valid answer. The title shortens (CART 2/10, CART) to leave the status room. The parameter FIRMWARE
 (knob 3) and knob 4 pick the ESP32 firmware slot to boot. The knobs accelerate as Sloop's own. The
 other pages keep controlling Sloop.
 
@@ -16,6 +17,9 @@ The track on the cartridge's MIDI channel (from the reply) is the cartridge trac
 out over MIDI, its engine stays silent, it shows the cartridge's names, and PRESETS (HOME, TRACKS,
 the PRESETS page) browses the cartridge's presets across engines; its LEVEL, MIDI EXPRESSION and
 MUTE set the USB return and its meter shows it; Sloop sends the cartridge START, STOP and the clock while it answers.
+A Program Change from MIDI in for the cartridge track, with its Bank Select, goes to the cartridge,
+which picks its sound with it, and CART DELAY (menu HOME → USB, KNOB 3) sends the track's steps
+early by the return's latency.
 See the cartridge project's `docs/CARTRIDGE.md`.
 
 The FM-1 and the ESP32 run the same protocol version, or the ESP32 a newer one, read as far as

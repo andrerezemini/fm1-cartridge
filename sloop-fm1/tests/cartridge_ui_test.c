@@ -397,6 +397,120 @@ static void test_cartridge_lifecycle(void)
     check(uar_track_q12 == 4096u && trk[0].peak >= 5000 && !uar_peak, "the track's meter reads the return");
 }
 #ifndef CARTRIDGE_UI_HARNESS_ONLY
+/* MIDI in: a Program Change and its Bank Select (CC 0, CC 32) on the cartridge track go to the cartridge, in order and
+ * on its channel, and a query 20 ms later brings its new names; the track's own sound stays. On another track they load
+ * Sloop's sound as before. CART DELAY: the cartridge track's steps go out that many ms early. The header: the cell's
+ * level on the right, the title shortened to keep clear of a long status */
+static uint32_t midi_at(uint32_t status, uint32_t d1)    /* where in the MIDI OUT ring since mo_r, or MQ */
+{
+    uint32_t i;
+    for (i = mo_r; i != mo_w; i++)
+        if (((midi_out_q[i % MQ] >> 8) & 0xFFu) == status && ((midi_out_q[i % MQ] >> 16) & 0x7Fu) == d1) return i - mo_r;
+    return MQ;
+}
+static uint32_t step_out_sample(uint32_t delay_ms)       /* the sample the second step's note went out at */
+{
+    uint8_t n62 = 62;
+    uint32_t f, at = 0;
+    cart_delay_ms = (uint8_t)delay_ms;
+    put_step(&trk[0], 1, 1, &n62, ST_NOTE, 0);
+    mo_r = mo_w; transport_req = 1;
+    for (f = 0; f < 40u && !at; f++) {
+        frame();
+        if (midi_seen(0x90 | trk_midi_ch(0), 62)) at = (clk_beat * BEAT_U + clk_pos) / (uint32_t)song.g[G_BPM];
+    }
+    transport_req = 2; frames(2);
+    put_step(&trk[0], 1, 0, &n62, ST_REST, 0);
+    cart_delay_ms = CART_DELAY_DEFAULT_MS;
+    return at;
+}
+static void test_cartridge_program_and_delay(void)
+{
+    uint8_t route = (uint8_t)song.g[G_ROUTE], sel = song.sel;
+    uint32_t e0 = trk[0].eng_req, p0 = trk[0].preset, ch = trk_midi_ch(0), ch1 = trk_midi_ch(1);
+    set_cart_channel(1); frame();
+    leave_page();
+    song.g[G_ROUTE] = 0;                                 /* (MIDI in by channel) */
+    mo_r = mo_w;
+    midi_in_event(0x0Bu | (0xB0u | ch) << 8 | 0u << 16 | 2u << 24);
+    midi_in_event(0x0Bu | (0xB0u | ch) << 8 | 32u << 16 | 1u << 24);
+    midi_in_event(0x0Cu | (0xC0u | ch) << 8 | 5u << 16);
+    frame();
+    check(midi_at(0xB0 | ch, 0) < midi_at(0xB0 | ch, 32) && midi_at(0xB0 | ch, 32) < midi_at(0xC0 | ch, 5) &&
+          midi_at(0xC0 | ch, 5) < MQ, "Bank Select and Program Change on the cartridge track go to the cartridge, in order");
+    check(!pc_req[0] && trk[0].eng_req == e0 && trk[0].preset == p0, "the cartridge track's own sound stays");
+    cart_service(0);
+    check(!cart.waiting, "no query before the cartridge has loaded the sound");
+    fm1_ms += 25; cart_service(0);
+    check(cart.waiting && cart.q[CART_OP] == CART_QUERY && !cart_program_ms, "a query 20 ms later fetches its new names");
+    exchange();
+    mo_r = mo_w; ui.msg[0] = 0;
+    midi_in_event(0x0Cu | (0xC0u | ch1) << 8 | 3u << 16); frame();
+    check(midi_at(0xC0 | ch1, 3) == MQ && !strcmp(ui.msg, "T2 PROG 3"), "a Program Change for another track loads its Sloop sound");
+    song.g[G_ROUTE] = 2;                                 /* IN = CH 1: the selected track */
+    song.sel = 0; mo_r = mo_w;
+    midi_in_event(0x0Cu | 0xC0u << 8 | 7u << 16); frame();
+    check(midi_at(0xC0 | ch, 7) < MQ && !pc_req[0], "IN = CH n: the selected cartridge track's Program Change goes to the cartridge");
+    song.sel = 1; mo_r = mo_w; ui.msg[0] = 0;
+    midi_in_event(0x0Cu | 0xC0u << 8 | 7u << 16); frame();
+    check(midi_at(0xC0 | ch1, 7) == MQ && !strcmp(ui.msg, "T2 PROG 7"), "and another selected track's loads its Sloop sound");
+    song.sel = sel; song.g[G_ROUTE] = route;
+    fm1_ms += 25; cart_service(0); if (so_w != so_r) exchange();
+    {   /* CART DELAY: the same step 25 ms earlier (one frame of 16 ms either way) */
+        uint32_t on = step_out_sample(0), early = step_out_sample(25), d = on - early;
+        printf("cart delay: the step went out at sample %u, %u with 25 ms\n", on, early);
+        check(on && early && d + 704u >= 25u * FS / 1000u && d <= 25u * FS / 1000u + 704u,
+              "CART DELAY 25 ms: the cartridge track's step goes out 25 ms early");
+        check(step_out_sample(50) + 704u >= on - div_samples(trk_div(&trk[0])) / 2u,
+              "never more than half a step early");
+    }
+    {   /* the menu row: KNOB 3 of HOME -> USB, OFF .. 50 ms, OCT+ off and back */
+        cart_delay_ms = 0;
+        mi_set(MI_CDELAY, 1); mi_set(MI_CDELAY, 1);
+        check(cart_delay_ms == 2u, "CART DELAY: a knob step is 1 ms");
+        mi_set(MI_CDELAY, 0); check(!cart_delay_ms, "OCT+ turns it OFF");
+        mi_set(MI_CDELAY, 0); check(cart_delay_ms == 2u, "and back");
+        for (uint32_t i = 0; i < 80u; i++) mi_set(MI_CDELAY, 1);
+        check(cart_delay_ms == CART_DELAY_MAX_MS, "it stops at its maximum");
+        check(MS_FIRST[MS_RETURN + 1] - MS_FIRST[MS_RETURN] <= 4u && mi_sec(MI_CDELAY) == MS_RETURN,
+              "it is a row of the USB section, which keeps four rows at most");
+        cart_delay_ms = CART_DELAY_DEFAULT_MS;
+    }
+#ifndef CART_REAL_SERVER
+    {   /* protocol 4: the cell in the header, a message as it turns LOW and EMPTY; a long status shortens the title */
+        uint8_t r[CART_REPLY_SIZE];
+        uint32_t was = uar.active, n, k = page_pos(&n);
+        int32_t title = 6 + text_w(&FONT_S, "CARTRIDGE 10/10"), status = text_w(&FONT_S, "XXXXXXXXXXX NO AUDIO");
+        check(234 - text_w(&FONT_S, "EMPTY") - 8 - status >= 6, "the longest status and EMPTY fit the header");
+        check(6 + text_w(&FONT_S, "CART 10/10") + 8 <= 234 - text_w(&FONT_S, "100%") - 8 - text_w(&FONT_S, "CLIPPER OK") &&
+              title + 8 <= 234 - text_w(&FONT_S, "CLIPPER OK"),
+              "CARTRIDGE n/n and CLIPPER OK fit; with the cell's level the title is CART n/n");
+        (void)k;
+        refresh_page(); assert(drain_request() == CART_REQUEST_SIZE);
+        memcpy(r, cart.view, sizeof r);
+        cart_put14(r + CART_SEQ, cart_u14(last_request + CART_SEQ));
+        r[CART_BATTERY] = 12; r[CART_POWER] = CART_POWER_LOW; ui.msg[0] = 0;
+        response(r);
+        check(!strcmp(ui.msg, "CARTRIDGE BATTERY LOW"), "the cell turning LOW is said once, on any page");
+        uar.active = 0; ui.force = 1; frame(); ppm("cartridge-battery-low");
+        uar.active = was;
+        refresh_page(); assert(drain_request() == CART_REQUEST_SIZE);
+        cart_put14(r + CART_SEQ, cart_u14(last_request + CART_SEQ)); ui.msg[0] = 0;
+        response(r);
+        check(!ui.msg[0], "and not again while it stays LOW");
+        refresh_page(); assert(drain_request() == CART_REQUEST_SIZE);
+        cart_put14(r + CART_SEQ, cart_u14(last_request + CART_SEQ));
+        r[CART_POWER] = CART_POWER_CUTOFF;
+        response(r);
+        check(!strcmp(ui.msg, "CARTRIDGE BATTERY EMPTY"), "the cutoff is said too");
+        refresh_page(); assert(drain_request() == CART_REQUEST_SIZE);
+        cart_put14(r + CART_SEQ, cart_u14(last_request + CART_SEQ));
+        r[CART_BATTERY] = CART_BATTERY_NONE; r[CART_POWER] = CART_POWER_NONE;
+        response(r); ui.msg[0] = 0; ui.force = 1; frame();
+    }
+#endif
+    refresh_page(); exchange();                          /* (the page open again, as the tests after this expect) */
+}
 int main(int argc, char **argv)
 {
     outdir = argc > 1 ? argv[1] : "build/host";
@@ -473,6 +587,7 @@ int main(int argc, char **argv)
     }
     test_cartridge_track();
     test_cartridge_lifecycle();
+    test_cartridge_program_and_delay();
     int16_t local_params[P_COUNT]; memcpy(local_params, TSEL->p, sizeof local_params);
     uint8_t old_engine = cart.view[CART_ENG];
     encs[panel.enc[EN_K1]] = 1; encs[panel.enc[EN_K4]] = 3; frame();
