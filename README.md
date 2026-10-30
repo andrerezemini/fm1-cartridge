@@ -6,6 +6,8 @@ synthesizers (Clipper, Melodee or Felucca) and sends stereo PCM back over USB au
 FM-1 mixes into its own output. The cartridge has no DAC. The three synthesizers live in three
 flash slots, and the FM-1 chooses which one runs from its GLO → CARTRIDGE page.
 
+<p align="center"><img src="hardware/photos/prototype-board.jpg" alt="The cartridge: an ESP32-S3 Super Mini on its LiPo cell, with the SPDT switch at the top and the USB-C male-to-male adapter at the bottom" width="320"></p>
+
 ```mermaid
 flowchart LR
     B[Protected LiPo] --> C[ESP32-S3 / USB host / synthesizer]
@@ -164,8 +166,6 @@ Software tests move the implementation forward but do not replace this sequence.
 go into [BENCH_TESTS.md](docs/BENCH_TESTS.md).
 
 ## Hardware and limits
-
-<p align="center"><img src="hardware/photos/prototype-board.jpg" alt="The cartridge: an ESP32-S3 Super Mini on its LiPo cell, with the SPDT switch at the top and the USB-C male-to-male adapter at the bottom" width="320"></p>
 
 The prototype is an ESP32-S3 Super Mini on a protected 1S LiPo, with an SPDT switch on BAT+,
 insulation and a small case, plugged into the FM-1 through a USB-C male-to-male adapter
