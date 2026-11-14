@@ -223,3 +223,5 @@ Parts of the electrical design are still open, so no circuit here is a proven de
 Code under [GPL-3.0-only](LICENSE), preserving the notices and compatible licences of the upstream
 components (see each `third_party/*/README.md`). An independent project, not affiliated with
 M-VAVE, Seeed or the authors of the original firmwares.
+
+Related: try FM-1 firmwares in the browser with the free community [FM-1 Emulator](https://fm1-emulator.atst.tools/).
